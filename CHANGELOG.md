@@ -1,5 +1,17 @@
 # Changelog / 更新日志
 
+## 0.5.5
+
+### English
+- DroidBridge (no root): keep a blocking MCP host call counted against the concurrency limit until it actually finishes, even if its client disconnects or the tunnel request times out.
+- Add regression coverage for client cancellation, disposal of an undeliverable reply, and capacity recovery after a host error.
+- The root edition carries the matching release version; this MCP host fix applies to the App edition.
+
+### 中文
+- 卓爱桥（免 Root）：客户端断开或隧道请求超时后，仍在运行的 MCP 后台调用继续占用并发名额，直到实际完成，避免连续取消请求突破并发上限。
+- 增加回归验证，覆盖客户端取消、无法送达的结果释放，以及调用报错后恢复并发名额。
+- Root 版同步版本号；本次 MCP 调用修复作用于 App 版。
+
 ## 0.5.4
 
 ### English
