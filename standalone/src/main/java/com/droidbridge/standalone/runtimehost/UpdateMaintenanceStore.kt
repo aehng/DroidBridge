@@ -1,7 +1,7 @@
 package com.droidbridge.standalone.runtimehost
 
-import com.droidbridge.standalone.product.update.validUpdateCode
-import com.droidbridge.standalone.product.update.validUpdateStage
+import com.droidbridge.standalone.product.release.validUpdateCode
+import com.droidbridge.standalone.product.release.validUpdateStage
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.channels.FileChannel

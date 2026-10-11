@@ -1,5 +1,7 @@
 package com.droidbridge.standalone.product.update
 
+import com.droidbridge.standalone.product.release.validUpdateCode
+import com.droidbridge.standalone.product.release.validUpdateStage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -91,7 +93,3 @@ object UpdateMaintenanceReplies {
     private fun JsonObject.boolean(key: String): Boolean =
         requireNotNull((getValue(key) as JsonPrimitive).takeUnless { it.isString }?.booleanOrNull)
 }
-
-internal fun validUpdateCode(value: String): Boolean = value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))
-
-internal fun validUpdateStage(value: String): Boolean = value.matches(Regex("[a-z][a-z0-9_]{0,47}"))

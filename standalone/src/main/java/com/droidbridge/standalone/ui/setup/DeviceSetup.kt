@@ -15,7 +15,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import com.droidbridge.standalone.client.BackgroundFacts
 import java.io.File
-import com.droidbridge.standalone.execution.shizuku.ShizukuManagers
+import com.droidbridge.standalone.platform.ShizukuManagers
 
 /**
  * Reads the device facts the setup guide needs and opens the settings pages it points to. Every

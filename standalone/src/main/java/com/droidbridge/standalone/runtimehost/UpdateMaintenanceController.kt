@@ -14,7 +14,7 @@ import com.droidbridge.standalone.product.release.ReleaseConfig
 import com.droidbridge.standalone.product.release.ReleaseHash
 import com.droidbridge.standalone.product.release.ReleaseManifests
 import com.droidbridge.standalone.product.release.ReleaseRejected
-import com.droidbridge.standalone.product.update.cleanupUpdateCache
+import com.droidbridge.standalone.product.release.cleanupUpdateCache
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json

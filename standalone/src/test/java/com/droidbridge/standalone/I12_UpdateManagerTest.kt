@@ -5,7 +5,7 @@ import com.droidbridge.standalone.product.release.ReleaseConfig
 import com.droidbridge.standalone.product.update.ReleaseTransport
 import com.droidbridge.standalone.product.update.UpdateCheck
 import com.droidbridge.standalone.product.update.UpdateManager
-import com.droidbridge.standalone.product.update.cleanupUpdateCache
+import com.droidbridge.standalone.product.release.cleanupUpdateCache
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream

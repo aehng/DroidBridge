@@ -1,4 +1,4 @@
-package com.droidbridge.standalone.execution.shizuku
+package com.droidbridge.standalone.platform
 
 import android.content.Context
 import android.content.Intent

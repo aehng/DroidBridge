@@ -35,6 +35,9 @@ if ($dirty) { Fail "working tree is clean (tracked changes: $($dirty -join '; ')
 $revision = (git rev-parse HEAD).Trim()
 Pass "working tree is clean at $revision"
 Native 'release configuration' { java tools/ReleaseTool.java check-config }
+# The layering rules hold at the revision being released, not only when the stage tools run.
+Native 'architecture gate' { pwsh -NoProfile -File tools/check-architecture.ps1 }
+Pass 'architecture gate holds'
 
 # 2. Locked build of both unsigned APKs and the stable module staging (Gradle STRICT verification, cargo --locked).
 Native 'unsigned release build' {

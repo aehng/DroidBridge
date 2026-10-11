@@ -13,6 +13,7 @@ import com.droidbridge.standalone.execution.android.AndroidExecutionRequest
 import com.droidbridge.standalone.execution.android.AndroidExecutionResult
 import com.droidbridge.standalone.execution.android.AndroidPrimitive
 import com.droidbridge.standalone.execution.android.RegisteredCapabilityState
+import com.droidbridge.standalone.platform.ShizukuManagers
 import com.droidbridge.standalone.runtimehost.KeepAliveSettings
 import java.io.File
 import java.util.UUID
