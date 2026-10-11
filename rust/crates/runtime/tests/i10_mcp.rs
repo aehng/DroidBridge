@@ -20,6 +20,7 @@ struct HostState {
     submitted: Vec<Value>,
     queries: Vec<Value>,
     submit_reply: Option<Result<Value, ()>>,
+    submit_error: Option<DomainError>,
     query_replies: Vec<(Value, Option<Vec<u8>>)>,
 }
 
@@ -33,6 +34,12 @@ impl RecordingHost {
 
     fn fail_submit(&self) {
         self.0.lock().unwrap().submit_reply = Some(Err(()));
+    }
+
+    fn fail_submit_with(&self, error: DomainError) {
+        let mut state = self.0.lock().unwrap();
+        state.submit_reply = Some(Err(()));
+        state.submit_error = Some(error);
     }
 
     fn queue_query(&self, payload: Value, bytes: Option<&[u8]>) {
@@ -61,10 +68,10 @@ impl McpHost for RecordingHost {
                 .push(serde_json::from_slice(&envelope).unwrap());
             match state.submit_reply.clone() {
                 Some(Ok(response)) => Ok(serde_json::to_vec(&response).unwrap()),
-                _ => Err(DomainError::new(
+                _ => Err(state.submit_error.clone().unwrap_or(DomainError::new(
                     contract::ErrorCode::CapabilityUnavailable,
                     "Runtime unavailable",
-                )),
+                ))),
             }
         })
     }
@@ -1041,4 +1048,33 @@ async fn i10_g09_tool_calls_are_admitted_without_the_private_request_id_key() {
         "params._meta.io.droidbridge/requestId"
     );
     assert_eq!(host.submitted().len(), 3);
+}
+
+#[tokio::test]
+async fn i10_a_host_that_is_busy_answers_retryable_with_its_reason() {
+    let (facade, host) = facade();
+    host.fail_submit_with(DomainError::new(
+        contract::ErrorCode::ResourceLimit,
+        "MCP host is busy: every call slot is held by a call that is still running; retry shortly",
+    ));
+    let busy = json_body(
+        &facade
+            .handle(
+                tool_call("task_control", json!({"action": "list", "input": {}})),
+                TOKEN,
+            )
+            .await,
+    );
+    assert_eq!(busy["result"]["isError"], true);
+    assert_eq!(
+        busy["result"]["structuredContent"]["code"],
+        "RESOURCE_LIMIT"
+    );
+    assert_eq!(busy["result"]["structuredContent"]["retryable"], true);
+    assert!(
+        busy["result"]["structuredContent"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("busy")
+    );
 }

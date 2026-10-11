@@ -1,5 +1,17 @@
 # Changelog / 更新日志
 
+## Unreleased
+
+### English
+- DroidBridge (no root): when all 16 MCP call slots are held by calls that are still running, for
+  example calls whose client already gave up, a new call now waits at most 10 seconds and is then
+  answered with a retryable `RESOURCE_LIMIT` error that says the host is busy, instead of waiting
+  without limit. The running calls are not cancelled.
+
+### 中文
+- 卓爱桥（免 Root）：16 个 MCP 调用名额都被仍在运行的调用占着（例如客户端已经放弃的调用）时，新调用最多等待 10 秒，
+  之后会收到说明"主机忙碌"的可重试 `RESOURCE_LIMIT` 错误，不再无限等待。正在运行的调用不会被取消。
+
 ## 0.5.5
 
 ### English

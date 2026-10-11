@@ -15,23 +15,29 @@ use serde_json::Value;
 use std::{
     ptr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::sync::{Semaphore, oneshot};
 
 /// Bounds the Kotlin host calls in flight, each on its own short-lived thread.
 const MAX_HOST_CALLS: usize = 16;
+/// How long a call waits for a slot before it is answered as busy. A call whose client left keeps
+/// its slot until it finishes, so an unbounded wait would hang every client behind it.
+const HOST_SLOT_WAIT: Duration = Duration::from_secs(10);
 
 static LISTENER: Mutex<Option<McpListener>> = Mutex::new(None);
 
 /// The Kotlin HostController, which submits to the APK Runtime.
 pub(crate) struct KotlinMcpHost {
     permits: Arc<Semaphore>,
+    slot_wait: Duration,
 }
 
 impl KotlinMcpHost {
     pub(crate) fn new() -> Self {
         Self {
             permits: Arc::new(Semaphore::new(MAX_HOST_CALLS)),
+            slot_wait: HOST_SLOT_WAIT,
         }
     }
 
@@ -39,12 +45,26 @@ impl KotlinMcpHost {
         &self,
         call: impl FnOnce() -> Result<T, DomainError> + Send + 'static,
     ) -> Result<T, DomainError> {
-        let permit = Arc::clone(&self.permits)
-            .acquire_owned()
-            .await
-            .map_err(|_| {
-                DomainError::new(ErrorCode::CapabilityUnavailable, "MCP host is closed")
-            })?;
+        let permit = match tokio::time::timeout(
+            self.slot_wait,
+            Arc::clone(&self.permits).acquire_owned(),
+        )
+        .await
+        {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                return Err(DomainError::new(
+                    ErrorCode::CapabilityUnavailable,
+                    "MCP host is closed",
+                ));
+            }
+            Err(_) => {
+                return Err(DomainError::new(
+                    ErrorCode::ResourceLimit,
+                    "MCP host is busy: every call slot is held by a call that is still running; retry shortly",
+                ));
+            }
+        };
         let (sender, receiver) = oneshot::channel();
         // A plain thread rather than `spawn_blocking`: the host call can block on the APK
         // Runtime's own executor, which refuses to start inside another Tokio runtime context.
@@ -361,6 +381,7 @@ mod tests {
     async fn cancelled_client_keeps_slot_until_worker_and_reply_are_finished() {
         let host = Arc::new(KotlinMcpHost {
             permits: Arc::new(Semaphore::new(1)),
+            slot_wait: Duration::from_secs(5),
         });
         let (started, ready) = oneshot::channel();
         let (release, blocked) = std::sync::mpsc::channel();
@@ -405,10 +426,54 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_call_that_finds_every_slot_held_is_answered_busy_and_the_held_call_is_untouched() {
+        let host = Arc::new(KotlinMcpHost {
+            permits: Arc::new(Semaphore::new(1)),
+            slot_wait: Duration::from_millis(150),
+        });
+        let (started, ready) = oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let held_host = Arc::clone(&host);
+        let held = tokio::spawn(async move {
+            held_host
+                .on_host_thread(move || {
+                    let _ = started.send(());
+                    blocked
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("test must release the host worker");
+                    Ok(7)
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), ready)
+            .await
+            .expect("host worker must start")
+            .expect("worker must signal its start");
+
+        let waited = std::time::Instant::now();
+        let busy = host.on_host_thread(|| Ok(1)).await.unwrap_err();
+        assert_eq!(busy.code, ErrorCode::ResourceLimit);
+        assert!(busy.reason.contains("busy"), "{}", busy.reason);
+        assert!(waited.elapsed() >= Duration::from_millis(100));
+        assert!(waited.elapsed() < Duration::from_secs(3));
+
+        // The call that holds the slot is not cancelled: it finishes with its own answer, and
+        // only then does the slot take another call.
+        release.send(()).expect("host worker must still be running");
+        assert_eq!(held.await.unwrap().unwrap(), 7);
+        let next = tokio::time::timeout(Duration::from_secs(2), host.on_host_thread(|| Ok(42)))
+            .await
+            .expect("a finished worker must release its slot")
+            .unwrap();
+        assert_eq!(next, 42);
+    }
+
     #[tokio::test]
     async fn failed_host_call_releases_its_slot() {
         let host = KotlinMcpHost {
             permits: Arc::new(Semaphore::new(1)),
+            slot_wait: Duration::from_secs(5),
         };
         let result = host
             .on_host_thread(|| {

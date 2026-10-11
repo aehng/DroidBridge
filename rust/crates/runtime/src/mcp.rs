@@ -678,7 +678,11 @@ impl<H: McpHost> McpFacade<H> {
             Ok(response) => response,
             // A request this facade could not hand over may still have been served, so the answer
             // names what went wrong instead of claiming the call did not happen.
-            Err(error) => return self.tool_failure(id, &operation, error.code, error.reason),
+            Err(error) => {
+                // Capacity that is only held by earlier calls frees itself, so asking again is fine.
+                let retryable = error.code == ErrorCode::ResourceLimit;
+                return self.tool_failure_with(id, &operation, error.code, error.reason, retryable);
+            }
         };
         let Ok(response) = serde_json::from_slice::<Value>(&response) else {
             return self.tool_failure(
@@ -798,10 +802,21 @@ impl<H: McpHost> McpFacade<H> {
         code: ErrorCode,
         message: &str,
     ) -> McpResponse {
+        self.tool_failure_with(id, operation, code, message, false)
+    }
+
+    fn tool_failure_with(
+        &self,
+        id: Value,
+        operation: &str,
+        code: ErrorCode,
+        message: &str,
+        retryable: bool,
+    ) -> McpResponse {
         let structured = json!({
             "code": code,
             "operation": operation,
-            "retryable": false,
+            "retryable": retryable,
             "message": message,
         });
         rpc_result(
