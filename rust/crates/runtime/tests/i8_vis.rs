@@ -992,3 +992,216 @@ fn i8_vis_coordinate_input_holds_its_target_not_the_whole_scene() {
         runtime::STALE_SCENE
     );
 }
+
+#[tokio::test]
+async fn i8_vis_focused_input_holds_the_app_its_observation_saw() {
+    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Available);
+    let observed = submit(&core, 40, observe_payload(), NOW_MS).await;
+    let observation_id = observed["result"]["observation_id"].as_str().unwrap();
+    let key = submit(
+        &core,
+        41,
+        serde_json::json!({
+            "tool":"visual","action":"interact",
+            "input":{"operation":"key","key_code":4,"observation_id":observation_id}
+        }),
+        NOW_MS + 1,
+    )
+    .await;
+    assert_eq!(key["outcome"], "success", "{key}");
+    let text = submit(
+        &core,
+        42,
+        serde_json::json!({
+            "tool":"visual","action":"interact",
+            "input":{"operation":"text","text":"hi","observation_id":observation_id}
+        }),
+        NOW_MS + 2,
+    )
+    .await;
+    assert_eq!(text["outcome"], "success", "{text}");
+    let expected = Some("com.android.settings".to_owned());
+    assert_eq!(
+        primitive.interactions(),
+        vec![
+            VisualInteractionRequest::Key {
+                key_code: 4,
+                meta_state: 0,
+                expected_package: expected.clone(),
+            },
+            VisualInteractionRequest::FocusedText {
+                text: "hi".to_owned(),
+                expected_package: expected,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn i8_vis_focused_input_without_an_observation_holds_nothing() {
+    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Available);
+    let key = submit(
+        &core,
+        43,
+        serde_json::json!({
+            "tool":"visual","action":"interact",
+            "input":{"operation":"key","key_code":3}
+        }),
+        NOW_MS,
+    )
+    .await;
+    assert_eq!(key["outcome"], "success", "{key}");
+    assert_eq!(
+        primitive.interactions(),
+        vec![VisualInteractionRequest::Key {
+            key_code: 3,
+            meta_state: 0,
+            expected_package: None,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn i8_vis_focused_input_rejects_an_unknown_observation() {
+    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Available);
+    let text = submit(
+        &core,
+        44,
+        serde_json::json!({
+            "tool":"visual","action":"interact",
+            "input":{
+                "operation":"text","text":"hi",
+                "observation_id":"88000000-0000-4000-8000-0000000000ff"
+            }
+        }),
+        NOW_MS,
+    )
+    .await;
+    assert_eq!(text["outcome"], "error", "{text}");
+    assert_eq!(text["error"]["code"], "STALE_REFERENCE");
+    assert!(primitive.interactions().is_empty());
+}
+
+#[test]
+fn i8_vis_foreground_package_must_be_the_observed_one() {
+    let fresh = |package: Option<&str>| VisualHierarchySnapshot {
+        display: display(7),
+        foreground: Some(ForegroundFact {
+            package: package.map(str::to_owned),
+            activity: None,
+        }),
+        nodes: Vec::new(),
+        truncated: false,
+        proof: VisualSceneProof::Privileged {
+            hierarchy_sha256: "b".repeat(64),
+        },
+    };
+    assert!(runtime::verify_foreground_package(&fresh(Some("a.b")), "a.b").is_ok());
+    for stale in [Some("c.d"), None] {
+        let error = runtime::verify_foreground_package(&fresh(stale), "a.b").unwrap_err();
+        assert_eq!(error.code, ErrorCode::StaleReference);
+    }
+}
+
+fn key_back(lease_id: Option<&str>) -> serde_json::Value {
+    let mut input = serde_json::json!({"operation":"key","key_code":4});
+    if let Some(lease_id) = lease_id {
+        input["lease_id"] = serde_json::json!(lease_id);
+    }
+    serde_json::json!({"tool":"visual","action":"interact","input":input})
+}
+
+#[tokio::test]
+async fn i8_vis_lease_gives_screen_input_to_one_holder_until_released_or_lapsed() {
+    let (core, primitive) = core(CapabilityState::Available, CapabilityState::Available);
+    let acquire = |ttl_ms: u64| {
+        serde_json::json!({
+            "tool":"visual","action":"lease",
+            "input":{"operation":"acquire","ttl_ms":ttl_ms}
+        })
+    };
+
+    let first = submit(&core, 50, acquire(5_000), NOW_MS).await;
+    assert_eq!(first["outcome"], "success", "{first}");
+    assert_eq!(first["result"]["expires_in_ms"], 5_000);
+    let lease = first["result"]["lease_id"].as_str().unwrap().to_owned();
+
+    let second = submit(&core, 51, acquire(5_000), NOW_MS + 1).await;
+    assert_eq!(second["error"]["code"], "ALREADY_EXISTS", "{second}");
+
+    let without = submit(&core, 52, key_back(None), NOW_MS + 2).await;
+    assert_eq!(without["error"]["code"], "PERMISSION_DENIED", "{without}");
+    let foreign = submit(
+        &core,
+        53,
+        key_back(Some("88000000-0000-4000-8000-0000000000aa")),
+        NOW_MS + 3,
+    )
+    .await;
+    assert_eq!(foreign["error"]["code"], "PERMISSION_DENIED", "{foreign}");
+    assert!(primitive.interactions().is_empty());
+
+    let holder = submit(&core, 54, key_back(Some(&lease)), NOW_MS + 4).await;
+    assert_eq!(holder["outcome"], "success", "{holder}");
+    let observed = submit(&core, 55, observe_payload(), NOW_MS + 5).await;
+    assert_eq!(observed["outcome"], "success", "{observed}");
+
+    let stranger_release = submit(
+        &core,
+        56,
+        serde_json::json!({
+            "tool":"visual","action":"lease",
+            "input":{"operation":"release","lease_id":"88000000-0000-4000-8000-0000000000aa"}
+        }),
+        NOW_MS + 6,
+    )
+    .await;
+    assert_eq!(stranger_release["error"]["code"], "PERMISSION_DENIED");
+
+    let release = submit(
+        &core,
+        57,
+        serde_json::json!({
+            "tool":"visual","action":"lease",
+            "input":{"operation":"release","lease_id":lease}
+        }),
+        NOW_MS + 7,
+    )
+    .await;
+    assert_eq!(release["outcome"], "success", "{release}");
+    assert_eq!(release["result"]["expires_in_ms"], 0);
+
+    let stale = submit(&core, 58, key_back(Some(&lease)), NOW_MS + 8).await;
+    assert_eq!(stale["error"]["code"], "STALE_REFERENCE", "{stale}");
+    let free = submit(&core, 59, key_back(None), NOW_MS + 9).await;
+    assert_eq!(free["outcome"], "success", "{free}");
+}
+
+#[tokio::test]
+async fn i8_vis_lease_lapses_without_use_and_is_renewed_by_use() {
+    let (core, _primitive) = core(CapabilityState::Available, CapabilityState::Available);
+    let acquired = submit(
+        &core,
+        60,
+        serde_json::json!({
+            "tool":"visual","action":"lease",
+            "input":{"operation":"acquire","ttl_ms":1_000}
+        }),
+        NOW_MS,
+    )
+    .await;
+    let lease = acquired["result"]["lease_id"].as_str().unwrap().to_owned();
+
+    let renewed = submit(&core, 61, key_back(Some(&lease)), NOW_MS + 900).await;
+    assert_eq!(renewed["outcome"], "success", "{renewed}");
+    let still_held = submit(&core, 62, key_back(None), NOW_MS + 1_800).await;
+    assert_eq!(
+        still_held["error"]["code"], "PERMISSION_DENIED",
+        "{still_held}"
+    );
+
+    let lapsed = submit(&core, 63, key_back(None), NOW_MS + 2_000).await;
+    assert_eq!(lapsed["outcome"], "success", "{lapsed}");
+    let gone = submit(&core, 64, key_back(Some(&lease)), NOW_MS + 2_001).await;
+    assert_eq!(gone["error"]["code"], "STALE_REFERENCE", "{gone}");
+}

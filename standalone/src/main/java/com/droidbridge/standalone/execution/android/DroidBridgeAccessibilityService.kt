@@ -374,14 +374,19 @@ private class AccessibilityVisualAdapter(
     private suspend fun text(request: AndroidExecutionRequest): AndroidExecutionResult {
         val input = request.payloadObject()
         return if (input["operation"]?.jsonPrimitive?.contentOrNull == "focused") {
-            if (input.keys != setOf("operation", "text")) {
+            if (input.keys - "expected_package" != setOf("operation", "text")) {
                 throw AndroidExecutionException("INVALID_ARGUMENT")
             }
+            val expectedPackage = input["expected_package"]?.takeUnless { it is JsonNull }
+                ?.jsonPrimitive?.contentOrNull
             withTimeout(ACTION_TIMEOUT_MS) {
                 withContext(Dispatchers.Main.immediate) {
                     val root = activeRoot()
                         ?: throw AndroidExecutionException("CAPABILITY_UNAVAILABLE")
                     try {
+                        if (expectedPackage != null && root.packageName?.toString() != expectedPackage) {
+                            throw stale("visual window changed")
+                        }
                         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                             ?: throw AndroidExecutionException("CAPABILITY_UNAVAILABLE")
                         try {

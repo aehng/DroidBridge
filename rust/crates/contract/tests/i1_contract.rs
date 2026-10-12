@@ -90,7 +90,7 @@ fn i1_g02_catalog_fields_defaults_bounds_and_internal_schemas_are_serializable()
         16
     );
     assert_eq!(serde_json::to_value(TaskState::Created).unwrap(), "created");
-    assert_eq!(metadata["actions"].as_array().unwrap().len(), 30);
+    assert_eq!(metadata["actions"].as_array().unwrap().len(), 31);
     assert_eq!(
         metadata["result_schema_bindings"]
             .as_object()

@@ -245,6 +245,22 @@ where
         }
     }
 
+    fn verify_root_foreground(
+        &self,
+        execution: &AdmittedExecution,
+        expected_package: Option<&str>,
+        claim: &LocalExecutionClaim,
+    ) -> Result<(), ExecutionFailure> {
+        let Some(expected_package) = expected_package else {
+            return Ok(());
+        };
+        let display = self.display(execution, claim)?;
+        let current_scene =
+            parse_privileged_hierarchy(&self.dump_hierarchy(execution, claim)?, 1, display)
+                .map_err(clean_failure)?;
+        runtime::verify_foreground_package(&current_scene, expected_package).map_err(clean_failure)
+    }
+
     fn interact_root(
         &self,
         execution: &AdmittedExecution,
@@ -308,7 +324,11 @@ where
                     }
                 }
             }
-            VisualInteractionRequest::FocusedText { text } => {
+            VisualInteractionRequest::FocusedText {
+                text,
+                expected_package,
+            } => {
+                self.verify_root_foreground(execution, expected_package.as_deref(), claim)?;
                 if text.len() > 8_192 || text.contains('\0') {
                     return Err(clean_failure(DomainError::new(
                         ErrorCode::Unsupported,
@@ -323,7 +343,9 @@ where
             VisualInteractionRequest::Key {
                 key_code,
                 meta_state,
+                expected_package,
             } => {
+                self.verify_root_foreground(execution, expected_package.as_deref(), claim)?;
                 let modifiers = meta_modifier_keys(meta_state).filter(|_| key_code >= 0);
                 match modifiers {
                     Some(keys) if keys.is_empty() => VisualRootPrimitive::Key(key_code),

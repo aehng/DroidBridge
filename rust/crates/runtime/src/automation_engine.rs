@@ -659,12 +659,19 @@ fn element_interaction(
             Some(node_ref) => vec![VisualInteractInput::Text {
                 text,
                 node_ref: Some(node_ref.clone()),
+                observation_id: None,
+                lease_id: None,
             }],
             None => vec![
-                VisualInteractInput::Tap { target: centre() },
+                VisualInteractInput::Tap {
+                    target: centre(),
+                    lease_id: None,
+                },
                 VisualInteractInput::Text {
                     text,
                     node_ref: None,
+                    observation_id: None,
+                    lease_id: None,
                 },
             ],
         });
@@ -680,8 +687,14 @@ fn element_interaction(
         _ => centre(),
     };
     Some(vec![match input.operation {
-        ElementOperation::LongPress => VisualInteractInput::LongPress { target },
-        _ => VisualInteractInput::Tap { target },
+        ElementOperation::LongPress => VisualInteractInput::LongPress {
+            target,
+            lease_id: None,
+        },
+        _ => VisualInteractInput::Tap {
+            target,
+            lease_id: None,
+        },
     }])
 }
 
@@ -849,22 +862,27 @@ mod tests {
             tap(&nodes[1..], true),
             Some(vec![VisualInteractInput::Tap {
                 target: PointTarget::Node {
-                    node_ref: "button".to_owned()
-                }
+                    node_ref: "button".to_owned(),
+                },
+                lease_id: None
             }])
         );
         // The first match is a label: its centre is pressed through the same observation.
         assert_eq!(
             tap(&nodes, true),
-            Some(vec![VisualInteractInput::Tap { target: centre() }])
+            Some(vec![VisualInteractInput::Tap {
+                target: centre(),
+                lease_id: None
+            }])
         );
         // Without coordinate input the label is still addressed as a node.
         assert_eq!(
             tap(&nodes, false),
             Some(vec![VisualInteractInput::Tap {
                 target: PointTarget::Node {
-                    node_ref: "label".to_owned()
-                }
+                    node_ref: "label".to_owned(),
+                },
+                lease_id: None
             }])
         );
     }
@@ -883,15 +901,23 @@ mod tests {
         };
         assert_eq!(
             act(ElementOperation::Tap, true),
-            Some(vec![VisualInteractInput::Tap { target: centre() }])
+            Some(vec![VisualInteractInput::Tap {
+                target: centre(),
+                lease_id: None
+            }])
         );
         assert_eq!(
             act(ElementOperation::Text, true),
             Some(vec![
-                VisualInteractInput::Tap { target: centre() },
+                VisualInteractInput::Tap {
+                    target: centre(),
+                    lease_id: None
+                },
                 VisualInteractInput::Text {
                     text: "hello".to_owned(),
-                    node_ref: None
+                    node_ref: None,
+                    observation_id: None,
+                    lease_id: None
                 },
             ])
         );
@@ -919,6 +945,8 @@ mod tests {
             Some(vec![VisualInteractInput::Text {
                 text: "hello".to_owned(),
                 node_ref: Some("input".to_owned()),
+                observation_id: None,
+                lease_id: None
             }])
         );
         assert!(find(ElementMatch::ResourceId, "com.example:id/input").is_some());

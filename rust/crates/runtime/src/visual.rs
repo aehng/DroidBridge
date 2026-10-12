@@ -13,8 +13,8 @@ use contract::{
     DisplayGeometry, ErrorCode, FileTarget, FileTargetType, FilesystemCall, FilesystemInspectInput,
     ForegroundFact, ImageFormat, InteractionTarget, NodeBounds, PointTarget, Region, RequestId,
     True, UuidV4, VisualCall, VisualInteractFact, VisualInteractInput, VisualInteractResult,
-    VisualNode, VisualObserveInput, VisualObserveResult, VisualSource, VisualViewInput,
-    VisualViewResult,
+    VisualLeaseInput, VisualLeaseResult, VisualNode, VisualObserveInput, VisualObserveResult,
+    VisualSource, VisualViewInput, VisualViewResult,
 };
 use domain::{DomainError, ExecutorRequest, VisualRoute};
 use serde::Serialize;
@@ -159,9 +159,28 @@ pub const STALE_WINDOW: &str = "visual window changed";
 pub const STALE_TARGET: &str = "visual target changed";
 pub const STALE_SCENE: &str = "visual scene changed";
 pub const STALE_EXPIRED: &str = "visual reference expired";
+pub const STALE_NO_WINDOW: &str = "visual observation has no foreground app";
+pub const STALE_LEASE: &str = "visual lease expired or was not issued";
 
 pub fn visual_stale(reason: &'static str) -> DomainError {
     DomainError::new(ErrorCode::StaleReference, reason)
+}
+
+/// Checks, immediately before focused text or a key is dispatched, that the app in front is still
+/// the one the caller observed. Neither input names a node, so the app is all there is to hold.
+pub fn verify_foreground_package(
+    fresh: &VisualHierarchySnapshot,
+    expected_package: &str,
+) -> Result<(), DomainError> {
+    let package = fresh
+        .foreground
+        .as_ref()
+        .and_then(|foreground| foreground.package.as_deref());
+    if package == Some(expected_package) {
+        Ok(())
+    } else {
+        Err(visual_stale(STALE_WINDOW))
+    }
 }
 
 pub fn target_at(nodes: &[VisualNode], x: u32, y: u32) -> Option<VisualTargetIdentity> {
@@ -262,12 +281,16 @@ pub enum VisualInteractionRequest {
         proof: VisualSceneProof,
         target: Option<VisualTarget>,
     },
+    /// `expected_package` is the foreground app of the observation the caller used; the provider
+    /// refuses the input when another app is in front. Absent when the caller used no observation.
     FocusedText {
         text: String,
+        expected_package: Option<String>,
     },
     Key {
         key_code: i32,
         meta_state: i32,
+        expected_package: Option<String>,
     },
 }
 
@@ -465,6 +488,8 @@ struct VisualObservationRecord {
     proof: Option<VisualSceneProof>,
     /// The nodes the caller was shown, kept so a coordinate input knows what it aims at.
     observed: Option<ObservedNodes>,
+    /// The app in front when the hierarchy was read, kept even when no nodes were requested.
+    foreground_package: Option<String>,
     node_refs: BTreeSet<String>,
     image_ref: Option<String>,
     pins: usize,
@@ -487,8 +512,17 @@ impl ObservedNodes {
     }
 }
 
+/// Exclusive use of screen input, held by whoever presents `id`. It lives only in this cache, so a
+/// restart of the Runtime that owns the surface ends it.
+struct VisualLease {
+    id: UuidV4,
+    ttl_ms: u64,
+    expires_at_ms: u64,
+}
+
 #[derive(Default)]
 struct VisualObservationCache {
+    lease: Option<VisualLease>,
     records: BTreeMap<String, VisualObservationRecord>,
     node_owners: BTreeMap<String, String>,
     image_owners: BTreeMap<String, String>,
@@ -496,6 +530,82 @@ struct VisualObservationCache {
 }
 
 impl VisualObservationCache {
+    fn live_lease(&mut self, now_ms: u64) -> Option<&mut VisualLease> {
+        if self
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.expires_at_ms <= now_ms)
+        {
+            self.lease = None;
+        }
+        self.lease.as_mut()
+    }
+
+    /// Admits an interaction against the lease: while one is held only its holder may interact, and
+    /// each admitted interaction renews it.
+    fn admit_interaction(
+        &mut self,
+        presented: Option<&UuidV4>,
+        now_ms: u64,
+    ) -> Result<(), DomainError> {
+        match (self.live_lease(now_ms), presented) {
+            (None, None) => Ok(()),
+            (None, Some(_)) => Err(visual_stale(STALE_LEASE)),
+            (Some(lease), Some(presented)) if lease.id == *presented => {
+                lease.expires_at_ms = now_ms.saturating_add(lease.ttl_ms);
+                Ok(())
+            }
+            (Some(_), _) => Err(DomainError::new(
+                ErrorCode::PermissionDenied,
+                "screen input is leased to another caller",
+            )),
+        }
+    }
+
+    fn acquire_lease(
+        &mut self,
+        ttl_ms: u64,
+        now_ms: u64,
+    ) -> Result<VisualLeaseResult, DomainError> {
+        if self.live_lease(now_ms).is_some() {
+            return Err(DomainError::new(
+                ErrorCode::AlreadyExists,
+                "screen input is already leased",
+            ));
+        }
+        let id = new_uuid()?;
+        self.lease = Some(VisualLease {
+            id: id.clone(),
+            ttl_ms,
+            expires_at_ms: now_ms.saturating_add(ttl_ms),
+        });
+        Ok(VisualLeaseResult {
+            lease_id: id,
+            expires_in_ms: ttl_ms,
+        })
+    }
+
+    fn release_lease(
+        &mut self,
+        presented: &UuidV4,
+        now_ms: u64,
+    ) -> Result<VisualLeaseResult, DomainError> {
+        match self.live_lease(now_ms) {
+            None => Err(visual_stale(STALE_LEASE)),
+            Some(lease) if lease.id != *presented => Err(DomainError::new(
+                ErrorCode::PermissionDenied,
+                "screen input is leased to another caller",
+            )),
+            Some(_) => {
+                self.lease = None;
+                Ok(VisualLeaseResult {
+                    lease_id: presented.clone(),
+                    expires_in_ms: 0,
+                })
+            }
+        }
+    }
+
     fn reserve(&mut self, observation_id: UuidV4, now_ms: u64) -> Result<(), DomainError> {
         self.remove_expired(now_ms);
         if self.records.len() >= VISUAL_OBSERVATION_LIMIT {
@@ -532,6 +642,7 @@ impl VisualObservationCache {
                 hierarchy_executor: None,
                 proof: None,
                 observed: None,
+                foreground_package: None,
                 node_refs: BTreeSet::new(),
                 image_ref: None,
                 pins: 1,
@@ -702,14 +813,39 @@ where
             &envelope,
             input,
         )?,
-        VisualCall::Interact(input) => execute_interact(
-            &primitives,
-            &observations,
-            execution,
-            claim,
-            &envelope,
-            input,
-        )?,
+        VisualCall::Interact(input) => {
+            observations
+                .lock()
+                .map_err(|_| internal_visual_lock())?
+                .admit_interaction(input.lease_id(), envelope.admitted_at_ms)
+                .map_err(verified_failure)?;
+            execute_interact(
+                &primitives,
+                &observations,
+                execution,
+                claim,
+                &envelope,
+                input,
+            )?
+        }
+        VisualCall::Lease(input) => {
+            let mut cache = observations.lock().map_err(|_| internal_visual_lock())?;
+            let leased = match input {
+                VisualLeaseInput::Acquire { ttl_ms } => {
+                    cache.acquire_lease(*ttl_ms, envelope.admitted_at_ms)
+                }
+                VisualLeaseInput::Release { lease_id } => {
+                    cache.release_lease(lease_id, envelope.admitted_at_ms)
+                }
+            }
+            .map_err(verified_failure)?;
+            serde_json::to_value(leased).map_err(|_| {
+                verified_failure(DomainError::new(
+                    ErrorCode::InternalError,
+                    "visual lease encoding failed",
+                ))
+            })?
+        }
     };
     let encoded_bytes = serde_json::to_vec(&result)
         .map_err(|_| {
@@ -769,6 +905,7 @@ where
             hierarchy_executor: None,
             proof: None,
             observed: None,
+            foreground_package: None,
             node_refs: BTreeSet::new(),
             image_ref: None,
             pins: 0,
@@ -901,6 +1038,10 @@ where
                             } else {
                                 record.hierarchy_executor = Some(source_executor.clone());
                                 record.proof = Some(hierarchy.proof.clone());
+                                record.foreground_package = hierarchy
+                                    .foreground
+                                    .as_ref()
+                                    .and_then(|foreground| foreground.package.clone());
                                 if input.include_nodes {
                                     record.node_refs = hierarchy
                                         .nodes
@@ -1087,14 +1228,14 @@ where
     P: VisualPrimitivePort,
 {
     let (request, target, pinned) = match input {
-        VisualInteractInput::Tap { target } => interaction_target(
+        VisualInteractInput::Tap { target, .. } => interaction_target(
             observations,
             execution,
             envelope.admitted_at_ms,
             target,
             "tap",
         )?,
-        VisualInteractInput::LongPress { target } => interaction_target(
+        VisualInteractInput::LongPress { target, .. } => interaction_target(
             observations,
             execution,
             envelope.admitted_at_ms,
@@ -1108,6 +1249,7 @@ where
             to_x,
             to_y,
             duration_ms,
+            ..
         } => {
             let record = pin_observation(observations, observation_id, envelope.admitted_at_ms)?;
             let built = (|| {
@@ -1150,6 +1292,7 @@ where
         VisualInteractInput::Text {
             text,
             node_ref: Some(node_ref),
+            ..
         } => {
             let record = observations
                 .lock()
@@ -1187,18 +1330,34 @@ where
         VisualInteractInput::Text {
             text,
             node_ref: None,
+            observation_id,
+            ..
         } => (
-            VisualInteractionRequest::FocusedText { text: text.clone() },
+            VisualInteractionRequest::FocusedText {
+                text: text.clone(),
+                expected_package: expected_package(
+                    observations,
+                    envelope.admitted_at_ms,
+                    observation_id.as_ref(),
+                )?,
+            },
             InteractionTarget::Focused,
             None,
         ),
         VisualInteractInput::Key {
             key_code,
             meta_state,
+            observation_id,
+            ..
         } => (
             VisualInteractionRequest::Key {
                 key_code: *key_code,
                 meta_state: *meta_state,
+                expected_package: expected_package(
+                    observations,
+                    envelope.admitted_at_ms,
+                    observation_id.as_ref(),
+                )?,
             },
             InteractionTarget::Focused,
             None,
@@ -1365,6 +1524,24 @@ fn interact_fact(
     }
 }
 
+/// The app in front when the caller observed, for input that names no node. The observation need not
+/// come from the executor that delivers the input: a package name means the same to every backend.
+fn expected_package(
+    observations: &Arc<Mutex<VisualObservationCache>>,
+    now_ms: u64,
+    observation_id: Option<&UuidV4>,
+) -> Result<Option<String>, ExecutionFailure> {
+    let Some(observation_id) = observation_id else {
+        return Ok(None);
+    };
+    let record = pin_observation(observations, observation_id, now_ms)?;
+    unpin_record(observations, &record)?;
+    record
+        .foreground_package
+        .map(Some)
+        .ok_or_else(|| verified_failure(visual_stale(STALE_NO_WINDOW)))
+}
+
 fn require_observation_executor(
     record: &VisualObservationRecord,
     execution: &AdmittedExecution,
@@ -1460,14 +1637,16 @@ where
 
 fn visual_executor_request(call: &VisualCall) -> VisualRoute {
     match call {
-        VisualCall::Observe(_) => VisualRoute::Display,
+        VisualCall::Observe(_) | VisualCall::Lease(_) => VisualRoute::Display,
         VisualCall::View(_) => VisualRoute::Transform,
         VisualCall::Interact(
             VisualInteractInput::Tap {
                 target: PointTarget::Node { .. },
+                ..
             }
             | VisualInteractInput::LongPress {
                 target: PointTarget::Node { .. },
+                ..
             }
             | VisualInteractInput::Text {
                 node_ref: Some(_), ..
@@ -1476,9 +1655,11 @@ fn visual_executor_request(call: &VisualCall) -> VisualRoute {
         VisualCall::Interact(
             VisualInteractInput::Tap {
                 target: PointTarget::Coordinate { .. },
+                ..
             }
             | VisualInteractInput::LongPress {
                 target: PointTarget::Coordinate { .. },
+                ..
             }
             | VisualInteractInput::Swipe { .. },
         ) => VisualRoute::CoordinateInput,
@@ -1494,6 +1675,7 @@ fn visual_action(call: &VisualCall) -> &'static str {
         VisualCall::Observe(_) => "observe",
         VisualCall::View(_) => "view",
         VisualCall::Interact(_) => "interact",
+        VisualCall::Lease(_) => "lease",
     }
 }
 

@@ -21,6 +21,9 @@ fn d200() -> u32 {
 fn d300() -> u64 {
     300
 }
+fn d60000() -> u64 {
+    60_000
+}
 fn d443() -> u16 {
     443
 }
@@ -1067,6 +1070,29 @@ pub enum VisualCall {
     View(VisualViewInput),
     #[serde(rename = "interact")]
     Interact(VisualInteractInput),
+    #[serde(rename = "lease")]
+    Lease(VisualLeaseInput),
+}
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "operation")]
+pub enum VisualLeaseInput {
+    /// Take exclusive use of screen input. While the lease is held, every interaction must carry its `lease_id`; observing is never restricted.
+    #[serde(rename = "acquire")]
+    Acquire {
+        /// How long the lease survives without an interaction that uses it; each such interaction renews it.
+        #[serde(default = "d60000")]
+        #[schemars(range(min = 1000, max = 600000))]
+        ttl_ms: u64,
+    },
+    #[serde(rename = "release")]
+    Release { lease_id: UuidV4 },
+}
+#[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VisualLeaseResult {
+    pub lease_id: UuidV4,
+    /// Time left before the lease lapses; 0 once it is released.
+    pub expires_in_ms: u64,
 }
 #[derive(Clone, Debug, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1155,11 +1181,17 @@ pub enum VisualInteractInput {
     Tap {
         #[serde(flatten)]
         target: PointTarget,
+        /// Lease taken with `visual.lease`; required while a lease is held.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "long_press")]
     LongPress {
         #[serde(flatten)]
         target: PointTarget,
+        /// Lease taken with `visual.lease`; required while a lease is held.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "swipe")]
     Swipe {
@@ -1176,6 +1208,9 @@ pub enum VisualInteractInput {
         #[serde(default = "d300")]
         #[schemars(range(min = 1, max = 10000))]
         duration_ms: u64,
+        /// Lease taken with `visual.lease`; required while a lease is held.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "text")]
     Text {
@@ -1184,6 +1219,12 @@ pub enum VisualInteractInput {
         /// Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.
         #[serde(skip_serializing_if = "Option::is_none")]
         node_ref: Option<String>,
+        /// Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observation_id: Option<UuidV4>,
+        /// Lease taken with `visual.lease`; required while a lease is held.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "key")]
     Key {
@@ -1191,7 +1232,26 @@ pub enum VisualInteractInput {
         key_code: i32,
         #[serde(default)]
         meta_state: i32,
+        /// Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observation_id: Option<UuidV4>,
+        /// Lease taken with `visual.lease`; required while a lease is held.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lease_id: Option<UuidV4>,
     },
+}
+
+impl VisualInteractInput {
+    /// The lease the caller presented with this interaction.
+    pub fn lease_id(&self) -> Option<&UuidV4> {
+        match self {
+            Self::Tap { lease_id, .. }
+            | Self::LongPress { lease_id, .. }
+            | Self::Swipe { lease_id, .. }
+            | Self::Text { lease_id, .. }
+            | Self::Key { lease_id, .. } => lease_id.as_ref(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1201,11 +1261,13 @@ enum VisualInteractWire {
     Tap {
         #[serde(flatten)]
         target: PointTarget,
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "long_press")]
     LongPress {
         #[serde(flatten)]
         target: PointTarget,
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "swipe")]
     Swipe {
@@ -1216,25 +1278,32 @@ enum VisualInteractWire {
         to_y: u32,
         #[serde(default = "d300")]
         duration_ms: u64,
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "text")]
     Text {
         text: String,
         node_ref: Option<String>,
+        observation_id: Option<UuidV4>,
+        lease_id: Option<UuidV4>,
     },
     #[serde(rename = "key")]
     Key {
         key_code: i32,
         #[serde(default)]
         meta_state: i32,
+        observation_id: Option<UuidV4>,
+        lease_id: Option<UuidV4>,
     },
 }
 
 impl From<VisualInteractWire> for VisualInteractInput {
     fn from(value: VisualInteractWire) -> Self {
         match value {
-            VisualInteractWire::Tap { target } => Self::Tap { target },
-            VisualInteractWire::LongPress { target } => Self::LongPress { target },
+            VisualInteractWire::Tap { target, lease_id } => Self::Tap { target, lease_id },
+            VisualInteractWire::LongPress { target, lease_id } => {
+                Self::LongPress { target, lease_id }
+            }
             VisualInteractWire::Swipe {
                 observation_id,
                 from_x,
@@ -1242,6 +1311,7 @@ impl From<VisualInteractWire> for VisualInteractInput {
                 to_x,
                 to_y,
                 duration_ms,
+                lease_id,
             } => Self::Swipe {
                 observation_id,
                 from_x,
@@ -1249,14 +1319,29 @@ impl From<VisualInteractWire> for VisualInteractInput {
                 to_x,
                 to_y,
                 duration_ms,
+                lease_id,
             },
-            VisualInteractWire::Text { text, node_ref } => Self::Text { text, node_ref },
+            VisualInteractWire::Text {
+                text,
+                node_ref,
+                observation_id,
+                lease_id,
+            } => Self::Text {
+                text,
+                node_ref,
+                observation_id,
+                lease_id,
+            },
             VisualInteractWire::Key {
                 key_code,
                 meta_state,
+                observation_id,
+                lease_id,
             } => Self::Key {
                 key_code,
                 meta_state,
+                observation_id,
+                lease_id,
             },
         }
     }
@@ -1275,8 +1360,15 @@ impl<'de> Deserialize<'de> for VisualInteractInput {
         let allowed: &[&str] = match operation {
             "tap" | "long_press" => {
                 match object.get("target").and_then(serde_json::Value::as_str) {
-                    Some("node") => &["operation", "target", "node_ref"],
-                    Some("coordinate") => &["operation", "target", "observation_id", "x", "y"],
+                    Some("node") => &["operation", "target", "node_ref", "lease_id"],
+                    Some("coordinate") => &[
+                        "operation",
+                        "target",
+                        "observation_id",
+                        "x",
+                        "y",
+                        "lease_id",
+                    ],
                     _ => return Err(de::Error::custom("unknown visual interaction target")),
                 }
             }
@@ -1288,9 +1380,22 @@ impl<'de> Deserialize<'de> for VisualInteractInput {
                 "to_x",
                 "to_y",
                 "duration_ms",
+                "lease_id",
             ],
-            "text" => &["operation", "text", "node_ref"],
-            "key" => &["operation", "key_code", "meta_state"],
+            "text" => &[
+                "operation",
+                "text",
+                "node_ref",
+                "observation_id",
+                "lease_id",
+            ],
+            "key" => &[
+                "operation",
+                "key_code",
+                "meta_state",
+                "observation_id",
+                "lease_id",
+            ],
             _ => return Err(de::Error::custom("unknown visual interaction operation")),
         };
         if object.keys().any(|key| !allowed.contains(&key.as_str())) {
@@ -1478,7 +1583,7 @@ pub struct ActionSpec {
     pub capability_requirement: &'static str,
 }
 
-pub const ACTION_SPECS: [ActionSpec; 30] = [
+pub const ACTION_SPECS: [ActionSpec; 31] = [
     ActionSpec {
         tool: "context",
         action: "status",
@@ -1573,6 +1678,12 @@ pub const ACTION_SPECS: [ActionSpec; 30] = [
         tool: "visual",
         action: "interact",
         automation_compatible: true,
+        capability_requirement: "dynamic",
+    },
+    ActionSpec {
+        tool: "visual",
+        action: "lease",
+        automation_compatible: false,
         capability_requirement: "dynamic",
     },
     ActionSpec {

@@ -66,6 +66,10 @@
     },
     {
       "maximum_escaped_terminal_bytes": 262144,
+      "operation": "visual.lease"
+    },
+    {
+      "maximum_escaped_terminal_bytes": 262144,
       "operation": "android.package"
     },
     {

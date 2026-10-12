@@ -97,6 +97,12 @@
       "tool": "visual"
     },
     {
+      "action": "lease",
+      "automation_compatible": false,
+      "capability_requirement": "dynamic",
+      "tool": "visual"
+    },
+    {
       "action": "package",
       "automation_compatible": false,
       "capability_requirement": "dynamic",
@@ -347,6 +353,9 @@
     ],
     "visual.interact": [
       "result.visual.interact"
+    ],
+    "visual.lease": [
+      "result.visual.lease"
     ],
     "visual.observe": [
       "result.visual.observe"

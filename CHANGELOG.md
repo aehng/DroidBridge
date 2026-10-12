@@ -1,5 +1,27 @@
 # Changelog / 更新日志
 
+## 0.5.7
+
+### English
+- `visual`: text typed into the focused editor (no `node_ref`) and key presses other than Wake Up
+  now name the `observation_id` of the screen they were meant for when sent through MCP. An input
+  without it is refused as invalid; one whose app is no longer in front is refused with
+  `STALE_REFERENCE` instead of landing in another app. Automation steps are unchanged.
+  Update agents or prompts that press Back, Home or other keys without observing first.
+- `visual`: new `lease` action. `acquire` takes exclusive use of screen input for `ttl_ms` (1 second
+  to 10 minutes, 60 seconds by default). While it is held every interaction, scheduled automation
+  steps included, must carry its `lease_id`, otherwise it is refused with `PERMISSION_DENIED`; each
+  interaction renews the lease, and `release` or expiry frees it. Observing is never restricted.
+  The lease lasts only as long as the Runtime process.
+
+### 中文
+- `visual`：通过 MCP 调用时，向聚焦输入框输入文字（不带 `node_ref`）和除唤醒外的按键，必须带上所对应屏幕的
+  `observation_id`。缺少时按无效参数拒绝；该应用已不在前台时以 `STALE_REFERENCE` 拒绝，不会输入到别的应用里。
+  自动化步骤不变。如果智能体或提示词会不先观察就直接按返回、主页等键，需要相应调整。
+- `visual`：新增 `lease` 动作。`acquire` 在 `ttl_ms`（1 秒到 10 分钟，默认 60 秒）内独占屏幕输入；
+  持有期间所有交互（包括定时自动化的步骤）都必须带上 `lease_id`，否则返回 `PERMISSION_DENIED`；
+  每次交互会续期，`release` 或到期后释放。观察不受限制。租约只在 Runtime 进程存续期间有效。
+
 ## 0.5.6
 
 ### English

@@ -168,7 +168,7 @@ fn validate_point(target: &PointTarget) -> Result<(), DomainError> {
 
 fn validate_visual(input: &VisualInteractInput) -> Result<(), DomainError> {
     match input {
-        VisualInteractInput::Tap { target } | VisualInteractInput::LongPress { target } => {
+        VisualInteractInput::Tap { target, .. } | VisualInteractInput::LongPress { target, .. } => {
             validate_point(target)
         }
         VisualInteractInput::Swipe { duration_ms, .. } => {
@@ -177,7 +177,7 @@ fn validate_visual(input: &VisualInteractInput) -> Result<(), DomainError> {
             }
             Ok(())
         }
-        VisualInteractInput::Text { text, node_ref } => {
+        VisualInteractInput::Text { text, node_ref, .. } => {
             bounded(text, 0, 65_536, "visual text is out of bounds")?;
             if let Some(node_ref) = node_ref {
                 bounded(node_ref, 1, 4096, "node_ref is out of bounds")?;

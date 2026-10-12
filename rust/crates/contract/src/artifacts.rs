@@ -130,6 +130,7 @@ fn schema_bundle() -> SchemaBundle {
     schemas.insert("result.task_control.list", schema_for!(TaskListResult));
     schemas.insert("result.task_control.snapshot", schema_for!(TaskSnapshot));
     schemas.insert("result.visual.interact", schema_for!(VisualInteractResult));
+    schemas.insert("result.visual.lease", schema_for!(VisualLeaseResult));
     schemas.insert("result.visual.observe", schema_for!(VisualObserveResult));
     schemas.insert("result.visual.view", schema_for!(VisualViewResult));
     SchemaBundle {
@@ -208,6 +209,7 @@ pub fn result_schema_bindings() -> Value {
         ("visual.observe", vec!["result.visual.observe"]),
         ("visual.view", vec!["result.visual.view"]),
         ("visual.interact", vec!["result.visual.interact"]),
+        ("visual.lease", vec!["result.visual.lease"]),
         ("android.package", vec!["result.android.package"]),
         ("android.launch", vec!["result.android.launch"]),
         ("android.intent", vec!["result.android.intent"]),

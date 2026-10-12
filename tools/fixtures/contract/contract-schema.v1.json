@@ -1065,6 +1065,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
@@ -1128,6 +1139,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
@@ -1210,6 +1232,17 @@
                   "format": "uint32",
                   "minimum": 0
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "observation_id": {
                   "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
@@ -1244,11 +1277,33 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "node_ref": {
                   "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "observation_id": {
+                  "description": "Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "operation": {
@@ -1274,10 +1329,32 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "meta_state": {
                   "type": "integer",
                   "format": "int32",
                   "default": 0
+                },
+                "observation_id": {
+                  "description": "Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "operation": {
                   "type": "string",
@@ -3904,6 +3981,22 @@
                     "action",
                     "input"
                   ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "type": "string",
+                      "const": "lease"
+                    },
+                    "input": {
+                      "$ref": "#/$defs/VisualLeaseInput"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "input"
+                  ]
                 }
               ],
               "required": [
@@ -4424,6 +4517,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
@@ -4487,6 +4591,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
@@ -4569,6 +4684,17 @@
                   "format": "uint32",
                   "minimum": 0
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "observation_id": {
                   "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
@@ -4603,11 +4729,33 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "node_ref": {
                   "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "observation_id": {
+                  "description": "Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "operation": {
@@ -4633,10 +4781,32 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "meta_state": {
                   "type": "integer",
                   "format": "int32",
                   "default": 0
+                },
+                "observation_id": {
+                  "description": "Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "operation": {
                   "type": "string",
@@ -4647,6 +4817,49 @@
               "required": [
                 "operation",
                 "key_code"
+              ]
+            }
+          ]
+        },
+        "VisualLeaseInput": {
+          "oneOf": [
+            {
+              "description": "Take exclusive use of screen input. While the lease is held, every interaction must carry its `lease_id`; observing is never restricted.",
+              "type": "object",
+              "properties": {
+                "operation": {
+                  "type": "string",
+                  "const": "acquire"
+                },
+                "ttl_ms": {
+                  "description": "How long the lease survives without an interaction that uses it; each such interaction renews it.",
+                  "type": "integer",
+                  "format": "uint64",
+                  "default": 60000,
+                  "maximum": 600000,
+                  "minimum": 1000
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "lease_id": {
+                  "$ref": "#/$defs/UuidV4"
+                },
+                "operation": {
+                  "type": "string",
+                  "const": "release"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "operation",
+                "lease_id"
               ]
             }
           ]
@@ -6573,6 +6786,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
@@ -6636,6 +6860,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
@@ -6718,6 +6953,17 @@
                   "format": "uint32",
                   "minimum": 0
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "observation_id": {
                   "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
@@ -6752,11 +6998,33 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "node_ref": {
                   "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "observation_id": {
+                  "description": "Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "operation": {
@@ -6782,10 +7050,32 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "meta_state": {
                   "type": "integer",
                   "format": "int32",
                   "default": 0
+                },
+                "observation_id": {
+                  "description": "Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "operation": {
                   "type": "string",
@@ -8011,6 +8301,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
@@ -8074,6 +8375,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
@@ -8156,6 +8468,17 @@
                   "format": "uint32",
                   "minimum": 0
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "observation_id": {
                   "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
@@ -8190,11 +8513,33 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "node_ref": {
                   "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "observation_id": {
+                  "description": "Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "operation": {
@@ -8220,10 +8565,32 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "meta_state": {
                   "type": "integer",
                   "format": "int32",
                   "default": 0
+                },
+                "observation_id": {
+                  "description": "Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "operation": {
                   "type": "string",
@@ -9304,6 +9671,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "tap"
@@ -9367,6 +9745,17 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "operation": {
                   "type": "string",
                   "const": "long_press"
@@ -9449,6 +9838,17 @@
                   "format": "uint32",
                   "minimum": 0
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "observation_id": {
                   "description": "Identifier from the observation used to choose the swipe coordinates.",
                   "$ref": "#/$defs/UuidV4"
@@ -9483,11 +9883,33 @@
             {
               "type": "object",
               "properties": {
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "node_ref": {
                   "description": "Optional editable node reference. Omit it to enter text into the focused editor; tap the editor first.",
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "observation_id": {
+                  "description": "Observation the focused editor was chosen from. MCP requires it when `node_ref` is omitted; input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "operation": {
@@ -9513,10 +9935,32 @@
                   "type": "integer",
                   "format": "int32"
                 },
+                "lease_id": {
+                  "description": "Lease taken with `visual.lease`; required while a lease is held.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "meta_state": {
                   "type": "integer",
                   "format": "int32",
                   "default": 0
+                },
+                "observation_id": {
+                  "description": "Observation the key is meant for. MCP requires it except for Wake Up (224); input is refused when the foreground app is no longer the observed one.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/UuidV4"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "operation": {
                   "type": "string",
@@ -12720,6 +13164,33 @@
         "True": {
           "type": "boolean",
           "const": true
+        }
+      }
+    },
+    "result.visual.lease": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "VisualLeaseResult",
+      "type": "object",
+      "properties": {
+        "expires_in_ms": {
+          "description": "Time left before the lease lapses; 0 once it is released.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "lease_id": {
+          "$ref": "#/$defs/UuidV4"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "expires_in_ms"
+      ],
+      "$defs": {
+        "UuidV4": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         }
       }
     },

@@ -729,8 +729,15 @@ class I14McpFacadeGateTest {
             delay(2_000)
             try {
                 val unicode = "卓爱桥中文｜繁體｜，。！？「」｜ＡＢＣ１２３｜🙂🚀𠮷"
+                val observationId = served(
+                    call(endpoint, token, 35, "visual", "observe", JSONObject().put("include_image", false)),
+                    "visual.observe",
+                ).getString("observation_id")
                 served(
-                    call(endpoint, token, 31, "visual", "interact", JSONObject().put("operation", "text").put("text", unicode)),
+                    call(
+                        endpoint, token, 31, "visual", "interact",
+                        JSONObject().put("operation", "text").put("text", unicode).put("observation_id", observationId),
+                    ),
                     "visual.interact",
                 )
                 delay(500)
@@ -745,12 +752,16 @@ class I14McpFacadeGateTest {
                 served(
                     call(
                         endpoint, token, 33, "visual", "interact",
-                        JSONObject().put("operation", "key").put("key_code", KEYCODE_A).put("meta_state", META_CTRL_ON),
+                        JSONObject().put("operation", "key").put("key_code", KEYCODE_A).put("meta_state", META_CTRL_ON)
+                            .put("observation_id", observationId),
                     ),
                     "visual.interact",
                 )
                 served(
-                    call(endpoint, token, 34, "visual", "interact", JSONObject().put("operation", "text").put("text", "replaced")),
+                    call(
+                        endpoint, token, 34, "visual", "interact",
+                        JSONObject().put("operation", "text").put("text", "replaced").put("observation_id", observationId),
+                    ),
                     "visual.interact",
                 )
                 delay(500)

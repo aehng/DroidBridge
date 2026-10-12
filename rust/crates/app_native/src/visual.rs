@@ -236,15 +236,23 @@ where
                 )
                 .map_err(clean_failure)
             }
-            (ProviderToken::Accessibility, VisualInteractionRequest::FocusedText { text }) => {
-                dispatch_completed(
-                    "visual.accessibility",
-                    "AccessibilityText",
-                    &serde_json::json!({"operation":"focused","text":text}),
-                    execution,
-                )
-                .map_err(clean_failure)
-            }
+            (
+                ProviderToken::Accessibility,
+                VisualInteractionRequest::FocusedText {
+                    text,
+                    expected_package,
+                },
+            ) => dispatch_completed(
+                "visual.accessibility",
+                "AccessibilityText",
+                &serde_json::json!({
+                    "operation":"focused",
+                    "text":text,
+                    "expected_package":expected_package,
+                }),
+                execution,
+            )
+            .map_err(clean_failure),
             (ProviderToken::Shizuku, request) => self.interact_shizuku(execution, request, claim),
             _ => Err(stale("visual interaction provider is invalid")),
         }
@@ -255,6 +263,25 @@ impl<C> ApkVisualPort<C>
 where
     C: CapabilityPort + Clone,
 {
+    fn verify_shizuku_foreground(
+        &self,
+        execution: &AdmittedExecution,
+        expected_package: Option<&str>,
+        claim: &LocalExecutionClaim,
+    ) -> Result<(), ExecutionFailure> {
+        let Some(expected_package) = expected_package else {
+            return Ok(());
+        };
+        let display = self.display(
+            &self.codec_execution(execution).map_err(clean_failure)?,
+            claim,
+        )?;
+        let current_scene =
+            parse_privileged_hierarchy(&self.dump_shizuku_hierarchy(execution, claim)?, 1, display)
+                .map_err(clean_failure)?;
+        runtime::verify_foreground_package(&current_scene, expected_package).map_err(clean_failure)
+    }
+
     fn capture_shizuku(
         &self,
         execution: &AdmittedExecution,
@@ -437,7 +464,11 @@ where
                     }
                 }
             }
-            VisualInteractionRequest::FocusedText { text } => {
+            VisualInteractionRequest::FocusedText {
+                text,
+                expected_package,
+            } => {
+                self.verify_shizuku_foreground(execution, expected_package.as_deref(), claim)?;
                 if text.len() > 8_192 {
                     return Err(clean_failure(DomainError::new(
                         ErrorCode::Unsupported,
@@ -458,24 +489,28 @@ where
             VisualInteractionRequest::Key {
                 key_code,
                 meta_state,
-            } => match runtime::meta_modifier_keys(meta_state).filter(|_| key_code >= 0) {
-                Some(keys) if keys.is_empty() => {
-                    ("input_key", serde_json::json!({"key_code":key_code}))
+                expected_package,
+            } => {
+                self.verify_shizuku_foreground(execution, expected_package.as_deref(), claim)?;
+                match runtime::meta_modifier_keys(meta_state).filter(|_| key_code >= 0) {
+                    Some(keys) if keys.is_empty() => {
+                        ("input_key", serde_json::json!({"key_code":key_code}))
+                    }
+                    Some(mut keys) => {
+                        keys.push(key_code);
+                        (
+                            "input_key_combination",
+                            serde_json::json!({"key_codes":keys}),
+                        )
+                    }
+                    None => {
+                        return Err(clean_failure(DomainError::new(
+                            ErrorCode::Unsupported,
+                            "Shizuku key input cannot represent the requested meta state",
+                        )));
+                    }
                 }
-                Some(mut keys) => {
-                    keys.push(key_code);
-                    (
-                        "input_key_combination",
-                        serde_json::json!({"key_codes":keys}),
-                    )
-                }
-                None => {
-                    return Err(clean_failure(DomainError::new(
-                        ErrorCode::Unsupported,
-                        "Shizuku key input cannot represent the requested meta state",
-                    )));
-                }
-            },
+            }
             VisualInteractionRequest::Node { .. } => {
                 return Err(stale("privileged XML does not own actionable nodes"));
             }

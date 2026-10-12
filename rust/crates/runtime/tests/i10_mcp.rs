@@ -688,7 +688,7 @@ async fn i10_g07_tool_and_resource_references_map_deterministically() {
             "That node does not accept text.",
         ),
         (
-            json!({"operation": "text", "text": "hi"}),
+            json!({"operation": "text", "text": "hi", "observation_id": "99300000-0000-4000-8000-000000000098"}),
             "CAPABILITY_UNAVAILABLE",
             "No editor has input focus.",
         ),
@@ -742,6 +742,40 @@ async fn i10_g07_tool_and_resource_references_map_deterministically() {
         assert_eq!(response["error"]["code"], -32602);
         assert_eq!(response["error"]["data"]["field"], "params.arguments");
     }
+    // Focused text and keys must name the observation they are meant for; Wake Up has no screen
+    // to observe and is the one key that need not.
+    for input in [
+        json!({"operation": "text", "text": "hi"}),
+        json!({"operation": "key", "key_code": 4}),
+    ] {
+        let response = json_body(
+            &facade
+                .handle(
+                    tool_call("visual", json!({"action": "interact", "input": input})),
+                    TOKEN,
+                )
+                .await,
+        );
+        assert_eq!(response["error"]["code"], -32602);
+        assert_eq!(
+            response["error"]["data"]["field"],
+            "params.arguments.input.observation_id"
+        );
+    }
+    let wake_error = json!({"code": "CAPABILITY_UNAVAILABLE", "operation": "visual.interact", "retryable": false});
+    host.reply_submit(json!({"protocol_version": 1, "request_id": REQUEST_ID, "outcome": "error", "error": wake_error}));
+    let wake = json_body(
+        &facade
+            .handle(
+                tool_call(
+                    "visual",
+                    json!({"action": "interact", "input": {"operation": "key", "key_code": 224}}),
+                ),
+                TOKEN,
+            )
+            .await,
+    );
+    assert!(wake.get("error").is_none(), "{wake}");
     let unknown_tool = tool_call(
         "automation.execution",
         json!({"action": "run", "input": {}}),

@@ -101,7 +101,9 @@ const fn presentation(name: &str) -> ToolPresentation {
                 "- Observe, view images or interact. observe already includes any available image.\n",
                 "- Screenshot-only: include_image=true, include_nodes=false.\n",
                 "- Coordinates: current observation_id and native display pixels.\n",
-                "- Text: focus the editor first. Verify the UI after interactions."
+                "- Text without node_ref and keys other than Wake Up need the observation_id they follow.\n",
+                "- Text: focus the editor first. Verify the UI after interactions.\n",
+                "- lease acquire takes screen input until release or ttl; send its lease_id with every interaction."
             ),
             false,
             true,
@@ -229,14 +231,16 @@ fn tool_examples(name: &str) -> Result<Value, DomainError> {
                 "action": "interact",
                 "input": {
                     "operation": "text",
-                    "text": "Test message"
+                    "text": "Test message",
+                    "observation_id": "11111111-1111-4111-8111-111111111111"
                 }
             },
             {
                 "action": "interact",
                 "input": {
                     "operation": "key",
-                    "key_code": 4
+                    "key_code": 4,
+                    "observation_id": "11111111-1111-4111-8111-111111111111"
                 }
             }
         ]),
@@ -658,6 +662,15 @@ impl<H: McpHost> McpFacade<H> {
                 field_detail(
                     "params.arguments",
                     "the action or input does not match this tool's advertised schema",
+                ),
+            );
+        }
+        if !focused_input_names_observation(name, arguments) {
+            return invalid_params(
+                id,
+                field_detail(
+                    "params.arguments.input.observation_id",
+                    "required: the observation the focused text or key is meant for",
                 ),
             );
         }
@@ -1206,6 +1219,24 @@ fn with_next_step(mut error: Value, arguments: &Map<String, Value>) -> Value {
         object.insert("message".to_owned(), Value::from(step));
     }
     error
+}
+
+/// Focused text and keys name no node, so the observation they were chosen from is what holds them
+/// to the app the caller saw. Wake Up is the one key sent when there is no screen to observe.
+fn focused_input_names_observation(tool: &str, arguments: &Map<String, Value>) -> bool {
+    const KEYCODE_WAKEUP: i64 = 224;
+    if tool != "visual" || arguments.get("action").and_then(Value::as_str) != Some("interact") {
+        return true;
+    }
+    let Some(input) = arguments.get("input") else {
+        return true;
+    };
+    let needs_observation = match input.get("operation").and_then(Value::as_str) {
+        Some("text") => input.get("node_ref").is_none(),
+        Some("key") => input.get("key_code").and_then(Value::as_i64) != Some(KEYCODE_WAKEUP),
+        _ => false,
+    };
+    !needs_observation || input.get("observation_id").is_some()
 }
 
 /// Typing fails for reasons the code alone does not name: the target is not an editor, or no editor
