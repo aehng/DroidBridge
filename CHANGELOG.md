@@ -1,16 +1,21 @@
 # Changelog / 更新日志
 
-## Unreleased
+## 0.5.6
 
 ### English
 - DroidBridge (no root): when all 16 MCP call slots are held by calls that are still running, for
   example calls whose client already gave up, a new call now waits at most 10 seconds and is then
   answered with a retryable `RESOURCE_LIMIT` error that says the host is busy, instead of waiting
   without limit. The running calls are not cancelled.
+- Developers: the release check now runs the architecture gate, and the update helpers shared by
+  the Runtime host and the update screens live in a neutral package, restoring the layering rules
+  that 0.5.4 and 0.5.5 broke. No behavior changes.
 
 ### 中文
 - 卓爱桥（免 Root）：16 个 MCP 调用名额都被仍在运行的调用占着（例如客户端已经放弃的调用）时，新调用最多等待 10 秒，
   之后会收到说明"主机忙碌"的可重试 `RESOURCE_LIMIT` 错误，不再无限等待。正在运行的调用不会被取消。
+- 开发者：发布检查现在会运行架构检查，Runtime 主机与更新界面共用的更新辅助代码移到中立包中，恢复了 0.5.4 和 0.5.5
+  破坏的分层规则，行为没有变化。
 
 ## 0.5.5
 
