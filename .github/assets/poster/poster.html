@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DroidBridge poster</title>
+<!--
+  One 1280x640 design for every poster. tools/render-poster.ps1 renders it headless; the language
+  comes from the URL hash (#zh or #en). Screens are the files in ../screenshots/<lang>/, so after a
+  UI change: replace those screenshots, then run the script. Nothing here is generated imagery.
+-->
+<style>
+  :root {
+    --blue-dark: #0a49d6;
+    --blue: #1677ff;
+    --blue-light: #2f9bff;
+    --cyan: #5ce1ff;
+    --ink: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html { margin: 0; background: #0a49d6; }
+  body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    position: relative;
+    color: var(--ink);
+    font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    background:
+      radial-gradient(760px 520px at 88% 18%, rgba(92, 225, 255, .38), transparent 62%),
+      radial-gradient(520px 420px at 6% 104%, rgba(10, 73, 214, .65), transparent 70%),
+      linear-gradient(135deg, var(--blue-dark) 0%, var(--blue) 52%, var(--blue-light) 100%);
+  }
+  .copy { position: absolute; left: 68px; top: 54px; width: 650px; height: 540px; }
+  .brand { display: flex; align-items: center; gap: 18px; }
+  .brand img { width: 76px; height: 76px; border-radius: 19px; box-shadow: 0 10px 26px rgba(3, 20, 70, .35); }
+  .brand span { font-size: 34px; font-weight: 700; letter-spacing: .2px; }
+  h1 {
+    margin: 26px 0 12px;
+    font-size: 54px;
+    line-height: 1.12;
+    font-weight: 800;
+    letter-spacing: -.5px;
+    text-shadow: 0 4px 22px rgba(3, 20, 70, .28);
+  }
+  .sub { margin: 0; font-size: 23px; line-height: 1.4; opacity: .94; }
+  .chips { margin: 26px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .chips li {
+    display: inline-flex; align-items: center; gap: 12px; align-self: flex-start;
+    padding: 7px 18px 7px 12px; border-radius: 999px; font-size: 20px; font-weight: 600;
+    background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .34);
+    backdrop-filter: blur(2px);
+  }
+  .chips li::before {
+    content: "\2713"; display: inline-grid; place-items: center; width: 26px; height: 26px;
+    border-radius: 50%; background: var(--cyan); color: #04307a; font-size: 16px; font-weight: 900;
+  }
+  .foot { position: absolute; left: 0; bottom: 0; font-size: 18px; opacity: .82; letter-spacing: .3px; }
+  .phones { position: absolute; left: 640px; top: 0; width: 640px; height: 640px; }
+  .phone {
+    position: absolute; width: 238px; padding: 8px; border-radius: 40px; background: #0a1226;
+    box-shadow: 0 34px 60px rgba(3, 20, 70, .5), inset 0 0 0 1px rgba(255, 255, 255, .12);
+  }
+  .phone img { display: block; width: 222px; border-radius: 32px; }
+  .phone.back-left { left: 6px; top: 118px; transform: rotate(-5deg); }
+  .phone.front { left: 196px; top: 50px; z-index: 2; }
+  .phone.back-right { left: 386px; top: 136px; transform: rotate(5deg); }
+</style>
+</head>
+<body>
+  <div class="copy">
+    <div class="brand"><img src="../icon.png" alt=""><span id="name"></span></div>
+    <h1 id="headline"></h1>
+    <p class="sub" id="sub"></p>
+    <ul class="chips" id="chips"></ul>
+    <div class="foot" id="foot"></div>
+  </div>
+  <div class="phones">
+    <div class="phone back-left"><img id="shot-settings" alt=""></div>
+    <div class="phone back-right"><img id="shot-capabilities" alt=""></div>
+    <div class="phone front"><img id="shot-home" alt=""></div>
+  </div>
+  <script id="strings" type="application/json">
+  {
+    "zh": {
+      "name": "卓爱桥 DroidBridge",
+      "headline": "让 AI 真的<br>在你手机上操作",
+      "sub": "运行在手机里的 MCP 服务器<br>不需要电脑，不需要 ADB",
+      "chips": ["ChatGPT 官方安全隧道直连", "Root 自动化：开机自启，离线定时", "本地 MCP · 开源免费"],
+      "foot": "github.com/zephyr7030/DroidBridge  ·  Android 13–17"
+    },
+    "en": {
+      "name": "DroidBridge",
+      "headline": "AI that actually<br>uses your phone",
+      "sub": "An MCP server that runs on the phone<br>No PC, no ADB",
+      "chips": ["ChatGPT through OpenAI's official tunnel", "Root automation: starts at boot, runs offline", "Local MCP · open source"],
+      "foot": "github.com/zephyr7030/DroidBridge  ·  Android 13–17"
+    }
+  }
+  </script>
+  <script>
+    const lang = location.hash === '#en' ? 'en' : 'zh';
+    const text = JSON.parse(document.getElementById('strings').textContent)[lang];
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.getElementById('name').textContent = text.name;
+    document.getElementById('headline').innerHTML = text.headline;
+    document.getElementById('sub').innerHTML = text.sub;
+    document.getElementById('foot').textContent = text.foot;
+    const chips = document.getElementById('chips');
+    for (const chip of text.chips) {
+      const item = document.createElement('li');
+      item.textContent = chip;
+      chips.appendChild(item);
+    }
+    for (const name of ['settings', 'capabilities', 'home']) {
+      document.getElementById('shot-' + name).src = '../screenshots/' + lang + '/' + name + '.png';
+    }
+  </script>
+</body>
+</html>

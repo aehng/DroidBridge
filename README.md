@@ -6,13 +6,14 @@
 
 <p align="center">
   <b>An on-device MCP server for Android.</b><br>
-  Let ChatGPT and local AI agents actually operate your phone — no PC, no ADB.
+  Connect ChatGPT through OpenAI's official secure tunnel, let AI agents operate your phone,<br>
+  and run scheduled automations on the phone itself — no PC, no ADB.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Android 13–17" src="https://img.shields.io/badge/Android-13%E2%80%9317-3DDC84">
-  <img alt="arm64-v8a" src="https://img.shields.io/badge/ABI-arm64--v8a-lightgrey">
+  <img alt="arm64-v8a, x86_64" src="https://img.shields.io/badge/ABI-arm64--v8a%20%7C%20x86__64-lightgrey">
   <img alt="MCP 2026-07-28" src="https://img.shields.io/badge/MCP-2026--07--28-8A2BE2">
   <a href="https://github.com/zephyr7030/DroidBridge/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/zephyr7030/DroidBridge"></a>
   <a href="https://github.com/zephyr7030/DroidBridge/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/zephyr7030/DroidBridge/total?label=downloads"></a>
@@ -25,15 +26,21 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/preview-en.png" alt="DroidBridge: AI that actually uses your phone" width="560">
+  <img src=".github/assets/poster-en.png" alt="DroidBridge: AI that actually uses your phone" width="800">
 </p>
 
-## What it is
+## Why DroidBridge
 
-DroidBridge runs a [Model Context Protocol](https://modelcontextprotocol.io) server **inside your phone**.
-An AI agent connected to it can see the screen, tap and type, manage files, run commands, use the
-clipboard and notifications, diagnose the network and schedule automations — with exactly the
-permissions you granted on the device, and nothing more.
+- **Official ChatGPT tunnel.** The phone polls OpenAI's Secure MCP Tunnel over HTTPS: no open port,
+  no public address and no relay of ours in between.
+- **Runs on the phone.** The MCP server and everything it drives live on the device. A computer and
+  ADB are only needed if you want an agent on a computer.
+- **Automation that outlives the conversation.** Ask once; the phone keeps doing it on a schedule or
+  on events. The root edition does it from a backend that starts at boot, with no app involved.
+- **Exactly the access you grant.** No extra remote permission layer, no telemetry, open source
+  (Apache-2.0).
+
+## How agents connect
 
 Two ways to connect, side by side:
 
@@ -41,23 +48,58 @@ Two ways to connect, side by side:
 |---|---|---|
 | **ChatGPT** | ChatGPT on the web (developer mode) | OpenAI's Secure MCP Tunnel. The phone polls OpenAI over HTTPS; no port is opened and no public address is needed. |
 | **Local MCP** | Agents on the same device, or on a computer over `adb forward` | Streamable HTTP on `127.0.0.1:8765/mcp` (root edition: port 8766) with a bearer token. |
-
 ## What an agent can do
 
 | Tool | What it covers |
 |---|---|
 | `context` | DroidBridge status, capabilities and the tool catalog |
-| `visual` | Observe the screen (image and UI hierarchy), tap, long-press, swipe, type text, press keys and key combinations |
+| `visual` | Observe the screen (image and UI hierarchy), tap, long-press, swipe, type text, press keys and key combinations; hold typed input to the app that was observed, and take exclusive use of screen input with a lease |
 | `android` | Inspect packages, launch apps and intents, clipboard, notifications |
 | `filesystem` | Inspect, read, write, edit, move, delete, archive (ZIP) and download files |
 | `command` | Run shell commands as the app or shell (Shizuku) identity, or as root in the root edition |
 | `network` | Diagnose DNS, TCP and TLS; capture and inject traffic (root edition) |
-| `automation` | Create, update, enable and delete automations that run on a schedule |
+| `automation` | Create, update, enable, delete and run automations (see below) |
 | `task_control` | List, inspect and cancel background tasks |
 
 Every tool carries MCP safety annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so
 clients such as ChatGPT ask you to confirm actions that change things.
 
+## Automation that keeps running without the AI
+
+Ask an agent once and the phone keeps doing it. Automations are saved on the device and run without
+the agent, a computer or an open conversation.
+
+| | What you can build |
+|---|---|
+| **Triggers** | a point in time · every N minutes (1 minute to 30 days) · calendar rules (RRULE, with a time zone) · events (`runtime.ready`, `network.default_changed`) |
+| **Steps** | call a tool action (`visual` interact or element, `android` launch and clipboard, `filesystem` manage and download, `command` run, `network` diagnose) · sequence · if/else on saved state, trigger data or the previous result · repeat · delay · set state · choose per step whether a failure stops the run |
+| **Element step** | finds a control by text, description or resource id *when the run happens*, then taps, long-presses or types, so a saved automation never holds a stale reference |
+| **Runs** | up to one hour each; state is kept between runs; every run is a Task you can list, inspect and cancel |
+| **Root edition** | the backend starts at boot with no app, arms a wake-up alarm timer for due runs, and can run steps as root (shell commands) |
+
+An agent saves one with `automation` → `save`:
+
+```json
+{
+  "name": "Morning check",
+  "enabled": true,
+  "trigger": {
+    "type": "rrule",
+    "rrule": "DTSTART:20261014T080000\nRRULE:FREQ=DAILY",
+    "timezone": "Asia/Shanghai"
+  },
+  "action": {
+    "type": "sequence",
+    "children": [
+      {"type": "call", "tool": "android", "action": "launch",
+       "args": {"operation": "package", "package_name": "com.android.settings"}},
+      {"type": "delay", "duration_ms": 3000},
+      {"type": "call", "tool": "visual", "action": "element",
+       "args": {"operation": "tap", "by": "text", "value": "Network & internet"}}
+    ]
+  }
+}
+```
 ## Choose your edition
 
 DroidBridge comes in two editions:
@@ -85,7 +127,8 @@ opens the right system page, and tells you when something is already covered by 
 
 ## Requirements
 
-- Android 13 to 17 on an **arm64-v8a** device.
+- Android 13 to 17 on an **arm64-v8a** device. The DroidBridge app also ships **x86_64**
+  libraries, so it runs on x86_64 emulators; the root edition is arm64-v8a only.
 - For ChatGPT: a plan with web developer mode (Plus or higher), a Secure MCP Tunnel and a Runtime
   API key from the OpenAI platform.
 - Optional: [Shizuku](https://shizuku.rikka.app/), [Magisk](https://github.com/topjohnwu/Magisk),
@@ -157,18 +200,14 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 
 ## Build from source
 
-The build is pinned and currently scripted for Windows with PowerShell 7:
-
-- JDK 17, Android SDK platform 37, Build Tools 36.0.0, NDK 29.0.14206865, CMake 3.31.6
-- Rust 1.98.0 (`rust/rust-toolchain.toml`) and `cargo-ndk` 4.1.2
-- libpcap 1.10.6 for the root network tools: `pwsh tools/build-libpcap.ps1`
+Building needs the pinned toolchain (JDK 17, Android SDK 37, NDK 29, Rust 1.98) and is currently
+scripted for Windows with PowerShell 7:
 
 ```bash
 ./gradlew :standalone:assembleDebug :root-frontend:assembleDebugMagiskModule
 ```
 
-`pwsh tools/check-toolchain.ps1` verifies the toolchain. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
+The exact versions, the libpcap step and the toolchain check are in [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Community
 
 Questions, device reports and release news: join the [Telegram group](https://t.me/anDroidBridge).

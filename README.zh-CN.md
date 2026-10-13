@@ -6,13 +6,14 @@
 
 <p align="center">
   <b>运行在手机上的 Android MCP 服务器。</b><br>
-  让 ChatGPT 和本地 AI 智能体真正操作你的手机——不需要电脑，不需要 ADB。
+  通过 OpenAI 官方安全隧道连接 ChatGPT，让 AI 智能体操作你的手机，<br>
+  并在手机本机运行定时自动化——不需要电脑，不需要 ADB。
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Android 13–17" src="https://img.shields.io/badge/Android-13%E2%80%9317-3DDC84">
-  <img alt="arm64-v8a" src="https://img.shields.io/badge/ABI-arm64--v8a-lightgrey">
+  <img alt="arm64-v8a, x86_64" src="https://img.shields.io/badge/ABI-arm64--v8a%20%7C%20x86__64-lightgrey">
   <img alt="MCP 2026-07-28" src="https://img.shields.io/badge/MCP-2026--07--28-8A2BE2">
   <a href="https://github.com/zephyr7030/DroidBridge/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/zephyr7030/DroidBridge"></a>
   <a href="https://github.com/zephyr7030/DroidBridge/releases"><img alt="下载量" src="https://img.shields.io/github/downloads/zephyr7030/DroidBridge/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F"></a>
@@ -25,14 +26,18 @@
 </p>
 
 <p align="center">
-  <img src=".github/assets/preview-zh.png" alt="卓爱桥：让 AI 真的在你手机上操作" width="560">
+  <img src=".github/assets/poster-zh.png" alt="卓爱桥：让 AI 真的在你手机上操作" width="800">
 </p>
 
-## 这是什么
+## 为什么选卓爱桥
 
-卓爱桥在**手机内部**运行一个 [Model Context Protocol（MCP）](https://modelcontextprotocol.io) 服务器。
-连上它的 AI 智能体可以看屏幕、点击和输入、管理文件、运行命令、读写剪贴板和通知、诊断网络、设置定时自动化——
-权限完全等于你在手机上授予的范围，不多也不少。
+- **ChatGPT 官方隧道。** 手机通过 HTTPS 主动向 OpenAI 的 Secure MCP Tunnel 取任务：不开放端口，
+  不需要公网地址，中间没有我们自己的中转。
+- **运行在手机上。** MCP 服务器和它驱动的一切都在设备里。只有想用电脑上的智能体时才需要电脑和 ADB。
+- **比对话更持久的自动化。** 说一次，手机就按计划或事件一直做下去；Root 版由开机自启、不依赖任何 App 的后端执行。
+- **权限恰好等于你授予的。** 没有额外的远程权限层，没有统计数据，开源（Apache-2.0）。
+
+## 连接方式
 
 两种连接方式并列：
 
@@ -40,22 +45,56 @@
 |---|---|---|
 | **ChatGPT** | 网页版 ChatGPT（开发者模式） | OpenAI 官方安全隧道（Secure MCP Tunnel）。手机通过 HTTPS 主动向 OpenAI 取任务，不开放端口，也不需要公网地址。 |
 | **本地 MCP** | 同一台手机上的智能体，或通过 `adb forward` 连接的电脑 | `127.0.0.1:8765/mcp`（Root 版为 8766 端口）上的 Streamable HTTP，使用 Bearer 令牌。 |
-
 ## 智能体能做什么
 
 | 工具 | 覆盖范围 |
 |---|---|
 | `context` | 卓爱桥状态、能力和工具目录 |
-| `visual` | 观察屏幕（截图和界面层级）、点击、长按、滑动、输入文字、按键和组合键 |
+| `visual` | 观察屏幕（截图和界面层级）、点击、长按、滑动、输入文字、按键和组合键；输入可绑定到所观察的应用，并可用租约独占屏幕输入 |
 | `android` | 查看应用、启动应用和 Intent、剪贴板、通知 |
 | `filesystem` | 查看、读取、写入、编辑、移动、删除、ZIP 打包解包、下载文件 |
 | `command` | 以应用或 Shell（Shizuku）身份运行命令；Root 版以 Root 身份运行 |
 | `network` | DNS、TCP、TLS 诊断；抓包和注入流量（Root 版） |
-| `automation` | 创建、修改、启用、删除按计划运行的自动化 |
+| `automation` | 创建、修改、启用、删除和运行自动化（见下） |
 | `task_control` | 列出、查看、取消后台任务 |
 
 每个工具都带有 MCP 安全标注（`readOnlyHint`、`destructiveHint`、`openWorldHint`），ChatGPT 等客户端会在执行改动类操作前请你确认。
 
+## 不依赖 AI 在线的自动化
+
+对智能体说一次，手机就会一直做下去。自动化保存在设备上，运行时不需要智能体、电脑或打开的对话。
+
+| | 可以搭建的内容 |
+|---|---|
+| **触发** | 某个时间点 · 每 N 分钟（1 分钟到 30 天）· 日历规则（RRULE，带时区）· 事件（`runtime.ready`、`network.default_changed`） |
+| **步骤** | 调用工具动作（`visual` 的 interact 和 element，`android` 的启动与剪贴板，`filesystem` 的管理与下载，`command` 运行，`network` 诊断）· 顺序 · 按已保存状态、触发数据或上一步结果做条件分支 · 重复 · 延时 · 设置状态 · 每一步可选择失败时是否中止 |
+| **控件步骤** | 在运行时按文字、描述或资源 ID 找到控件，再点击、长按或输入，所以保存的自动化不会持有过期引用 |
+| **运行** | 每次最长一小时；状态在多次运行之间保留；每次运行都是一个可列出、查看、取消的任务 |
+| **Root 版** | 后端开机自启，不依赖任何 App，为到点的运行设置唤醒闹钟，步骤可以用 Root 身份执行（Shell 命令） |
+
+智能体用 `automation` → `save` 保存一个：
+
+```json
+{
+  "name": "Morning check",
+  "enabled": true,
+  "trigger": {
+    "type": "rrule",
+    "rrule": "DTSTART:20261014T080000\nRRULE:FREQ=DAILY",
+    "timezone": "Asia/Shanghai"
+  },
+  "action": {
+    "type": "sequence",
+    "children": [
+      {"type": "call", "tool": "android", "action": "launch",
+       "args": {"operation": "package", "package_name": "com.android.settings"}},
+      {"type": "delay", "duration_ms": 3000},
+      {"type": "call", "tool": "visual", "action": "element",
+       "args": {"operation": "tap", "by": "text", "value": "Network & internet"}}
+    ]
+  }
+}
+```
 ## 选择版本
 
 卓爱桥有两个版本：
@@ -81,7 +120,7 @@
 
 ## 系统要求
 
-- Android 13 到 17，**arm64-v8a** 设备。
+- Android 13 到 17，**arm64-v8a** 设备。卓爱桥 App 还带有 **x86_64** 库，可在 x86_64 模拟器上运行；Root 版仅支持 arm64-v8a。
 - 连接 ChatGPT：需要支持网页开发者模式的套餐（Plus 及以上），以及在 OpenAI 平台创建的安全隧道和 Runtime API Key。
 - 可选：[Shizuku](https://shizuku.rikka.app/)，以及 [Magisk](https://github.com/topjohnwu/Magisk)、[KernelSU](https://github.com/tiann/KernelSU) 或 [APatch](https://github.com/bmax121/APatch)，用于 Root 版。
 
@@ -137,18 +176,13 @@
 
 ## 从源码构建
 
-构建环境是固定版本，目前脚本面向 Windows + PowerShell 7：
-
-- JDK 17、Android SDK platform 37、Build Tools 36.0.0、NDK 29.0.14206865、CMake 3.31.6
-- Rust 1.98.0（见 `rust/rust-toolchain.toml`）和 `cargo-ndk` 4.1.2
-- Root 网络工具需要 libpcap 1.10.6：`pwsh tools/build-libpcap.ps1`
+构建需要固定版本的工具链（JDK 17、Android SDK 37、NDK 29、Rust 1.98），目前脚本面向 Windows + PowerShell 7：
 
 ```bash
 ./gradlew :standalone:assembleDebug :root-frontend:assembleDebugMagiskModule
 ```
 
-`pwsh tools/check-toolchain.ps1` 可检查工具链。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
+具体版本、libpcap 步骤和工具链检查见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 ## 交流
 
 提问、反馈设备情况、获取版本更新：欢迎加入 [Telegram 群组](https://t.me/anDroidBridge)。
