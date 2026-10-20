@@ -57,6 +57,12 @@
     <string name="updates_error_connection">Could not contact the runtime. Check its status and retry.</string>
     <string name="updates_error_confirmation">Could not request installation confirmation. Return to this page or cancel and retry.</string>
     <string name="updates_error_result_missing">No final installation result was recorded. Check the installed version before retrying.</string>
+    <string name="updates_error_network">Could not reach the release server. Check the network connection and try again.</string>
+    <string name="updates_error_server">The release server answered with an error. Try again later.</string>
+    <string name="updates_error_verification">The release information did not pass verification. Do not install anything from it; try again later.</string>
+    <string name="updates_stage_fetch">Fetch release information</string>
+    <string name="updates_stage_download">Download update</string>
+    <string name="action_copy_diagnostics">Copy diagnostics</string>
     <string name="updates_error_generic">The update failed. Use the details below to check the cause.</string>
     <string name="updates_error_details">Stage: %1$s · Code: %2$s</string>
     <string name="updates_stage_verify">Verify update</string>

@@ -1,5 +1,21 @@
 # Changelog / 更新日志
 
+## 0.5.8
+
+### English
+- DroidBridge (no root): a failed update check or download now shows the stage and a stable code
+  (for example `fetch_manifest` · `DNS_FAILED`, `fetch_signature` · `HTTP_503`, `verify_manifest` ·
+  `REJECTED`) with a reason in plain words, and **Copy diagnostics** copies the app version, Android
+  API, ABIs, time and the failure for a report. A failed check used to show only "Error".
+- The README and the release notes now say that the APK, although named `arm64-v8a`, also carries the
+  x86_64 libraries.
+
+### 中文
+- 卓爱桥（免 Root）：检查更新或下载失败时，现在会显示失败阶段和稳定的错误码（例如 `fetch_manifest` · `DNS_FAILED`、
+  `fetch_signature` · `HTTP_503`、`verify_manifest` · `REJECTED`）以及通俗的原因，「复制诊断信息」会复制应用版本、
+  Android API、ABI、时间和失败信息，方便反馈。以前检查失败只显示「Error」。
+- README 和发布说明现在写明：这个 APK 虽然文件名带 `arm64-v8a`，同时也包含 x86_64 库。
+
 ## 0.5.7
 
 ### English

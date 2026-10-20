@@ -1,10 +1,14 @@
 package com.droidbridge.standalone.ui.updates
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -32,11 +36,14 @@ import androidx.lifecycle.viewModelScope
 import com.droidbridge.ui.R
 import com.droidbridge.standalone.R as AppR
 import com.droidbridge.ui.common.RowIcon
+import com.droidbridge.standalone.BuildConfig
 import com.droidbridge.standalone.client.DroidBridgeClient
 import com.droidbridge.standalone.product.update.MaintenanceRecordView
 import com.droidbridge.standalone.product.update.MaintenanceReply
 import com.droidbridge.standalone.product.release.ReleaseClassification
 import com.droidbridge.standalone.product.update.UpdateCheck
+import com.droidbridge.standalone.product.update.UpdateDiagnostics
+import com.droidbridge.standalone.product.update.UpdateFailureInfo
 import com.droidbridge.standalone.product.update.UpdateMaintenanceReplies
 import com.droidbridge.standalone.product.update.UpdateMaintenanceView
 import com.droidbridge.standalone.product.update.UpdateManager
@@ -56,6 +63,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 
 data class UpdatesUiState(
     val maintenance: UpdateMaintenanceView? = null,
@@ -214,8 +222,9 @@ fun UpdatesRoute(viewModel: UpdatesViewModel, apkVersion: String, back: () -> Un
             val failure = state.actionFailure ?: state.readFailure ?: record?.installFailure
             if (failure != null) {
                 item { UpdateFailure(failure) }
-            } else if (updates.downloadFailed) {
-                item { RouteError("updates:action", retry = null) }
+            } else {
+                val downloadFailure = updates.downloadFailure
+                if (downloadFailure != null) item { StepFailure(downloadFailure, retry = null) }
             }
             if (record != null) {
                 maintenanceActions(record, state.busy, installApk, viewModel::cancel)
@@ -237,7 +246,7 @@ private fun LazyListScope.checkRegion(
         UpdateCheck.Unconfigured -> item { Status(AppR.string.updates_configuration_unavailable, null, "configuration_unavailable", R.drawable.ic_status_unknown) }
         UpdateCheck.Idle -> Unit
         UpdateCheck.Checking -> item { RouteLoading("updates") }
-        UpdateCheck.Failed -> item { RouteError("updates", retry) }
+        is UpdateCheck.Failed -> item { StepFailure(check.failure, retry) }
         is UpdateCheck.Checked -> when (val classification = check.classification) {
             ReleaseClassification.UpToDate -> item { Status(AppR.string.updates_up_to_date, null, "up_to_date", R.drawable.ic_status_success) }
             is ReleaseClassification.ProductUpdate -> {
@@ -335,6 +344,63 @@ private fun UpdateFailure(failure: MaintenanceReply.Refused) {
             Text(stringResource(AppR.string.updates_error_details, stringResource(stage) + (failure.stage?.let { " (" + it + ")" } ?: ""), failure.code))
         },
         leadingContent = { RowIcon(R.drawable.ic_info) },
+        trailingContent = { CopyDiagnostics(UpdateFailureInfo(failure.stage ?: "request", failure.code)) },
         modifier = Modifier.testTag("updates:action_error"),
     )
+}
+
+private val NETWORK_FAILURES = setOf("DNS_FAILED", "TIMEOUT", "TLS_FAILED", "CONNECT_FAILED")
+
+/** A failed check or download: what went wrong in plain words, the stage and code to quote, and the report text. */
+@Composable
+private fun StepFailure(failure: UpdateFailureInfo, retry: (() -> Unit)?) {
+    val reason = when {
+        failure.code in NETWORK_FAILURES -> AppR.string.updates_error_network
+        failure.code.startsWith("HTTP_") -> AppR.string.updates_error_server
+        failure.code == "REJECTED" -> AppR.string.updates_error_verification
+        else -> AppR.string.updates_error_generic
+    }
+    val stage = when (failure.stage) {
+        "fetch_manifest", "fetch_signature" -> AppR.string.updates_stage_fetch
+        "verify_manifest", "verify_apk" -> AppR.string.updates_stage_verify
+        "download_apk" -> AppR.string.updates_stage_download
+        else -> AppR.string.updates_stage_request
+    }
+    Column {
+        ListItem(
+            headlineContent = { Text(stringResource(reason)) },
+            supportingContent = {
+                Text(stringResource(AppR.string.updates_error_details, stringResource(stage) + " (" + failure.stage + ")", failure.code))
+            },
+            leadingContent = { RowIcon(R.drawable.ic_status_error) },
+            trailingContent = { CopyDiagnostics(failure) },
+            modifier = Modifier.testTag("updates:step_error"),
+        )
+        retry?.let { action ->
+            TextButton(onClick = action, modifier = Modifier.padding(horizontal = 8.dp).testTag("updates:retry")) {
+                Text(stringResource(R.string.action_retry))
+            }
+        }
+    }
+}
+
+/** Copies versions, platform, time and the failure; nothing from the device's content or accounts. */
+@Composable
+private fun CopyDiagnostics(failure: UpdateFailureInfo) {
+    val context = LocalContext.current
+    TextButton(
+        onClick = {
+            val text = UpdateDiagnostics.text(
+                failure,
+                BuildConfig.VERSION_NAME,
+                BuildConfig.VERSION_CODE.toLong(),
+                Build.VERSION.SDK_INT,
+                Build.SUPPORTED_ABIS.toList(),
+                Instant.now().toString(),
+            )
+            context.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("DroidBridge diagnostics", text))
+        },
+        modifier = Modifier.testTag("updates:copy_diagnostics"),
+    ) { Text(stringResource(AppR.string.action_copy_diagnostics)) }
 }

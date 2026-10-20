@@ -57,6 +57,12 @@
     <string name="updates_error_connection">无法联系运行时，请检查状态后重试。</string>
     <string name="updates_error_confirmation">无法请求安装确认，请返回此页面，或取消更新后重试。</string>
     <string name="updates_error_result_missing">尚未记录最终安装结果，请先确认已安装版本再重试。</string>
+    <string name="updates_error_network">无法连接发布服务器。请检查网络连接后重试。</string>
+    <string name="updates_error_server">发布服务器返回了错误，请稍后重试。</string>
+    <string name="updates_error_verification">发布信息未通过校验。请不要安装其中的任何内容，稍后重试。</string>
+    <string name="updates_stage_fetch">获取发布信息</string>
+    <string name="updates_stage_download">下载更新</string>
+    <string name="action_copy_diagnostics">复制诊断信息</string>
     <string name="updates_error_generic">更新未完成，请根据下方详情检查原因。</string>
     <string name="updates_error_details">阶段：%1$s · 错误码：%2$s</string>
     <string name="updates_stage_verify">验证更新</string>

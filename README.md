@@ -141,7 +141,8 @@ opens the right system page, and tells you when something is already covered by 
 
 1. Download `droidbridge-<version>-arm64-v8a.apk` from the
    [latest release](https://github.com/zephyr7030/DroidBridge/releases/latest) (tag `apk-v<version>`)
-   and install it.
+   and install it. The name is historical: this one APK carries both the arm64-v8a and the x86_64
+   libraries.
 2. Open DroidBridge. The first-run guide asks which agent you use and walks through permissions.
 
 The release ships a `SHA256SUMS.txt` and a signed `release.json`; the app's **Updates** page uses
@@ -212,6 +213,13 @@ The exact versions, the libpcap step and the toolchain check are in [CONTRIBUTIN
 
 Questions, device reports and release news: join the [Telegram group](https://t.me/anDroidBridge).
 Bugs are best filed as [GitHub issues](https://github.com/zephyr7030/DroidBridge/issues).
+
+## Acknowledgements
+
+Thanks to **Mike** ([@mikex8593-ai](https://github.com/mikex8593-ai)) for patient, detailed device
+testing and reports on a Pixel, a Fold and a Chromebook. They led to the fix for expired request records
+that made the store unwritable, the fix for tasks left running after a store write failure, the review
+that found the MCP concurrency bug, the x86_64 build ChromeOS needs, and the update failure diagnostics.
 
 ## Support the project
 

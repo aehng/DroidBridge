@@ -62,9 +62,9 @@ New-Item -ItemType Directory -Force $notes | Out-Null
 $apkNotes = Join-Path $notes 'apk.md'
 $moduleNotes = Join-Path $notes 'magisk.md'
 [IO.File]::WriteAllText($apkNotes, @"
-**DroidBridge $version, the App for phones without root.** Install ``droidbridge-$version-arm64-v8a.apk``. For the root edition, see [``$moduleTag``]($releases/$moduleTag).
+**DroidBridge $version, the App for phones without root.** Install ``droidbridge-$version-arm64-v8a.apk`` (the name is historical: this one APK carries both the arm64-v8a and the x86_64 libraries). For the root edition, see [``$moduleTag``]($releases/$moduleTag).
 
-**卓爱桥 $version，面向未 Root 手机的 App。** 安装 ``droidbridge-$version-arm64-v8a.apk``。Root 版请见 [``$moduleTag``]($releases/$moduleTag)。
+**卓爱桥 $version，面向未 Root 手机的 App。** 安装 ``droidbridge-$version-arm64-v8a.apk``（文件名沿用旧名：这个 APK 同时包含 arm64-v8a 和 x86_64 库）。Root 版请见 [``$moduleTag``]($releases/$moduleTag)。
 
 $body
 "@.Replace("`r", ''), [Text.UTF8Encoding]::new($false))

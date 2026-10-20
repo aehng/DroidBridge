@@ -54,7 +54,7 @@ object HttpsReleaseTransport : ReleaseTransport {
                         val location = connection.getHeaderField("Location") ?: throw IOException("redirect without Location")
                         current = URI(current).resolve(location).toString()
                     }
-                    else -> throw IOException("release server returned HTTP $code")
+                    else -> throw HttpStatusException(code)
                 }
             } finally {
                 connection.disconnect()
@@ -84,7 +84,7 @@ sealed interface UpdateCheck {
     data object Unconfigured : UpdateCheck
     data object Idle : UpdateCheck
     data object Checking : UpdateCheck
-    data object Failed : UpdateCheck
+    class Failed(val failure: UpdateFailureInfo) : UpdateCheck
     /** A verified classification plus the exact signed bytes the Runtime re-verifies before maintenance. */
     class Checked(val classification: ReleaseClassification, val manifest: ByteArray, val signature: ByteArray) : UpdateCheck
 }
@@ -95,9 +95,12 @@ data class VerifiedDownloads(val manifest: ReleaseManifest, val apk: File)
 data class UpdateState(
     val check: UpdateCheck,
     val downloading: Boolean = false,
-    val downloadFailed: Boolean = false,
+    val downloadFailure: UpdateFailureInfo? = null,
     val downloads: VerifiedDownloads? = null,
 ) {
+    val downloadFailed: Boolean
+        get() = downloadFailure != null
+
     /** The `ui.product.v1` Home slot input: a completed verified check found a newer release. */
     val newerVersionAvailable: Boolean
         get() = (check as? UpdateCheck.Checked)?.classification is ReleaseClassification.ProductUpdate
@@ -121,16 +124,22 @@ class UpdateManager(
 
     suspend fun check() {
         val configured = config as? ReleaseConfig.Configured ?: return
-        mutableState.update { it.copy(check = UpdateCheck.Checking, downloadFailed = false) }
+        mutableState.update { it.copy(check = UpdateCheck.Checking, downloadFailure = null) }
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                val bytes = transport.get(configured.manifestUrl, ReleaseManifests.MAX_METADATA_BYTES.toLong()) { it.readBytes() }
-                val signature = transport.get(configured.manifestUrl + ".sig", ReleaseManifests.MAX_METADATA_BYTES.toLong()) { it.readBytes() }
-                UpdateCheck.Checked(
-                    ReleaseManifests.classify(ReleaseManifests.verify(configured, bytes, signature), installedVersionCode),
-                    bytes,
-                    signature,
-                )
+                val bytes = atStage("fetch_manifest") {
+                    transport.get(configured.manifestUrl, ReleaseManifests.MAX_METADATA_BYTES.toLong()) { it.readBytes() }
+                }
+                val signature = atStage("fetch_signature") {
+                    transport.get(configured.manifestUrl + ".sig", ReleaseManifests.MAX_METADATA_BYTES.toLong()) { it.readBytes() }
+                }
+                atStage("verify_manifest") {
+                    UpdateCheck.Checked(
+                        ReleaseManifests.classify(ReleaseManifests.verify(configured, bytes, signature), installedVersionCode),
+                        bytes,
+                        signature,
+                    )
+                }
             }
         }
         mutableState.update { current ->
@@ -139,7 +148,7 @@ class UpdateManager(
                 checked?.classification.manifestOrNull()?.let { it == prior.manifest } == true
             }
             current.copy(
-                check = checked ?: UpdateCheck.Failed,
+                check = checked ?: UpdateCheck.Failed(failureOf(checkedFailure(result))),
                 downloads = downloads,
             )
         }
@@ -149,12 +158,16 @@ class UpdateManager(
     suspend fun download() {
         val checked = (mutableState.value.check as? UpdateCheck.Checked)?.classification
         val manifest = (checked as? ReleaseClassification.ProductUpdate)?.manifest ?: return
-        mutableState.update { it.copy(downloading = true, downloadFailed = false) }
+        mutableState.update { it.copy(downloading = true, downloadFailure = null) }
         val result = withContext(Dispatchers.IO) {
             runCatching { VerifiedDownloads(manifest, fetchVerified(manifest.version, manifest.apk)) }
         }
         mutableState.update { current ->
-            current.copy(downloading = false, downloadFailed = result.isFailure, downloads = result.getOrNull() ?: current.downloads)
+            current.copy(
+                downloading = false,
+                downloadFailure = result.exceptionOrNull()?.let(::failureOf),
+                downloads = result.getOrNull() ?: current.downloads,
+            )
         }
     }
 
@@ -162,30 +175,34 @@ class UpdateManager(
         val directory = File(cacheRoot, version)
         val target = File(directory, artifact.name)
         if (target.isFile && target.length() == artifact.size && ReleaseHash.sha256(target) == artifact.sha256) return target
-        if (!directory.isDirectory && !directory.mkdirs()) throw IOException("update cache is unavailable")
         val part = File(directory, ".${artifact.name}.part")
-        part.delete()
         val digest = MessageDigest.getInstance("SHA-256")
         var written = 0L
-        transport.get(artifact.url, artifact.size) { input ->
-            part.outputStream().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    digest.update(buffer, 0, read)
-                    output.write(buffer, 0, read)
-                    written += read
+        atStage("download_apk") {
+            if (!directory.isDirectory && !directory.mkdirs()) throw IOException("update cache is unavailable")
+            part.delete()
+            transport.get(artifact.url, artifact.size) { input ->
+                part.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        digest.update(buffer, 0, read)
+                        output.write(buffer, 0, read)
+                        written += read
+                    }
+                    output.fd.sync()
                 }
-                output.fd.sync()
             }
         }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (written != artifact.size || actual != artifact.sha256) {
-            part.delete()
-            throw ReleaseRejected("downloaded ${artifact.name} does not match the signed manifest")
+        atStage("verify_apk") {
+            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+            if (written != artifact.size || actual != artifact.sha256) {
+                part.delete()
+                throw ReleaseRejected("downloaded ${artifact.name} does not match the signed manifest")
+            }
+            Files.move(part.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         }
-        Files.move(part.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         return target
     }
 
@@ -194,6 +211,9 @@ class UpdateManager(
             current.copy(downloads = current.downloads?.takeIf { it.apk.isFile })
         }
     }
+
+    private fun checkedFailure(result: Result<UpdateCheck.Checked>): Throwable =
+        result.exceptionOrNull() ?: IllegalStateException("check reported a failure without one")
 
     private fun ReleaseClassification?.manifestOrNull(): ReleaseManifest? = when (this) {
         is ReleaseClassification.ProductUpdate -> manifest

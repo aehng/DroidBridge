@@ -73,6 +73,6 @@ try {
     }
 } finally {
     Invoke-Shell 'am broadcast -a com.android.systemui.demo -e command exit'
-    Invoke-Shell "cmd locale set-app-locales $Package --locales ''"
+    Invoke-Shell "cmd locale set-app-locales $Package"   # no --locales: back to the system language
     if ($previousNight) { Invoke-Shell "cmd uimode night $previousNight" }
 }

@@ -128,7 +128,7 @@
 
 **卓爱桥**
 
-1. 在[最新版本](https://github.com/zephyr7030/DroidBridge/releases/latest)（标签 `apk-v<版本>`）下载 `droidbridge-<版本>-arm64-v8a.apk` 并安装。
+1. 在[最新版本](https://github.com/zephyr7030/DroidBridge/releases/latest)（标签 `apk-v<版本>`）下载 `droidbridge-<版本>-arm64-v8a.apk` 并安装。文件名沿用旧名：这个 APK 同时包含 arm64-v8a 和 x86_64 库，两种设备都能安装。
 2. 打开卓爱桥，首次启动引导会让你选择智能体类型，并逐项完成权限设置。
 
 版本附带 `SHA256SUMS.txt` 和签名的 `release.json`，App 的 **更新** 页会用签名校验自身更新。
@@ -187,6 +187,12 @@
 
 提问、反馈设备情况、获取版本更新：欢迎加入 [Telegram 群组](https://t.me/anDroidBridge)。
 问题报告请优先提交到 [GitHub Issues](https://github.com/zephyr7030/DroidBridge/issues)。
+
+## 鸣谢
+
+感谢 **Mike**（[@mikex8593-ai](https://github.com/mikex8593-ai)）在 Pixel、折叠屏和 Chromebook 上耐心、详细的真机测试与反馈。
+这些反馈促成了：过期请求记录导致存储不可写的修复、存储写入失败后任务一直运行的修复、对 MCP 并发名额问题的排查、
+ChromeOS 所需的 x86_64 版本，以及更新失败诊断。
 
 ## 支持项目
 
