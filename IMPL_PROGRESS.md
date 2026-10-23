@@ -22,3 +22,6 @@ Builds: cargo test runtime+domain green; gradle testDebugUnitTest + assembleDebu
 - P1-07+P1-09: Gemini delegation del_12e97212 in progress (do not duplicate).
 
 - P1-07 connection UI + P1-09 AuditLog.kt (500-row JSONL, owner-only) + audit screen: done (Gemini 3.8 Flash high). Full cargo test + gradle unit tests + assembleDebug green.
+
+- Flaky runtime lib test: 1 failure in ~13 runs (Grok D's uncommitted state), 0/12 since; not reproducible, not pursued (likely timing in tunnel/listener tests that sleep ~10s).
+- PHASE 1 (automatable scope) COMPLETE. Grok calls: 4. APK: standalone\build\outputs\apk\debug\standalone-debug.apk
