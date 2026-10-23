@@ -21,9 +21,13 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
+use tokio::sync::Notify;
 
 pub const VISUAL_OBSERVATION_LIMIT: usize = 32;
 /// How long after delivered input an observation waits before it starts. The screen answers a tap
@@ -31,6 +35,33 @@ pub const VISUAL_OBSERVATION_LIMIT: usize = 32;
 /// observation taken at once would describe the screen before the change and be stale when used.
 /// The device side then waits for the change it can see to settle.
 const INPUT_SETTLE: Duration = Duration::from_millis(300);
+/// Voice adapter settle after an action: scene-change notify or this cap, whichever comes first.
+pub const VOICE_SETTLE: Duration = Duration::from_millis(1_500);
+pub const VOICE_CALL_BUDGET: Duration = Duration::from_secs(45);
+
+static VOICE_SCENE: OnceLock<Notify> = OnceLock::new();
+static VOICE_JPEG_ENCODE: AtomicBool = AtomicBool::new(false);
+
+fn voice_scene_notify() -> &'static Notify {
+    VOICE_SCENE.get_or_init(Notify::new)
+}
+
+/// Accessibility reports a window/content change; the voice adapter can return from settle early.
+pub fn voice_scene_changed() {
+    voice_scene_notify().notify_waiters();
+}
+
+pub async fn wait_voice_settle() {
+    let _ = tokio::time::timeout(VOICE_SETTLE, voice_scene_notify().notified()).await;
+}
+
+pub fn set_voice_jpeg_encode(on: bool) {
+    VOICE_JPEG_ENCODE.store(on, Ordering::SeqCst);
+}
+
+pub fn voice_jpeg_encode() -> bool {
+    VOICE_JPEG_ENCODE.load(Ordering::SeqCst)
+}
 pub const VISUAL_OBSERVATION_TTL_MS: u64 = 300_000;
 /// No node refs were wanted; no node refs exist although nodes were wanted.
 const NODE_REFS_NOT_REQUESTED: &str = "NODES_NOT_REQUESTED";

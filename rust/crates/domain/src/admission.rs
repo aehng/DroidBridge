@@ -337,8 +337,8 @@ pub fn resolve_executor(
             (facts.shizuku, Provider::Shizuku),
         ],
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::Image)) => vec![
-            (facts.shizuku, Provider::Shizuku),
             (facts.accessibility, Provider::Accessibility),
+            (facts.shizuku, Provider::Shizuku),
             (facts.media_projection, Provider::MediaProjection),
         ],
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::CoordinateInput)) => vec![
@@ -348,8 +348,14 @@ pub fn resolve_executor(
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::FocusedText)) => {
             vec![(facts.accessibility, Provider::Accessibility)]
         }
+        // Accessibility first for Back (4), Home (3), and Recents (187). Other key codes still
+        // resolve here; the Accessibility primitive refuses anything outside that set so Shizuku
+        // remains the path for arbitrary keyevent (see visual_executor_request + Kotlin).
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::KeyInput)) => {
-            vec![(facts.shizuku, Provider::Shizuku)]
+            vec![
+                (facts.accessibility, Provider::Accessibility),
+                (facts.shizuku, Provider::Shizuku),
+            ]
         }
         (RuntimeHost::ApkRuntime, ExecutorRequest::Visual(VisualRoute::AccessibilityNode)) => {
             vec![(facts.accessibility, Provider::Accessibility)]

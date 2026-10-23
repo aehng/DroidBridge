@@ -34,6 +34,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
@@ -116,6 +117,7 @@ class DroidBridgeAccessibilityService : AccessibilityService() {
                         AndroidPrimitive.AccessibilityNodeAction,
                         AndroidPrimitive.AccessibilityGesture,
                         AndroidPrimitive.AccessibilityText,
+                        AndroidPrimitive.AccessibilityKey,
                     ),
                 ),
             ),
@@ -206,6 +208,7 @@ private class AccessibilityVisualAdapter(
             AndroidPrimitive.AccessibilityNodeAction -> nodeAction(request, textAction = false)
             AndroidPrimitive.AccessibilityText -> text(request)
             AndroidPrimitive.AccessibilityGesture -> gesture(request)
+            AndroidPrimitive.AccessibilityKey -> key(request)
             else -> throw AndroidExecutionException("UNSUPPORTED")
         }
     }
@@ -287,7 +290,7 @@ private class AccessibilityVisualAdapter(
         }
 
     private suspend fun screenshot(input: JsonObject): AndroidExecutionResult {
-        if (input.keys != SCREENSHOT_KEYS) throw AndroidExecutionException("INVALID_ARGUMENT")
+        if (input.keys - setOf("voice") != SCREENSHOT_KEYS) throw AndroidExecutionException("INVALID_ARGUMENT")
         val admitted = input.expectedDisplay()
         val before = display.snapshot()
         if (admitted != before) throw AndroidExecutionException("STALE_AUTHORITY")
@@ -312,13 +315,19 @@ private class AccessibilityVisualAdapter(
             if (captured != admitted || software.width != admitted.width || software.height != admitted.height) {
                 throw AndroidExecutionException("STALE_AUTHORITY")
             }
-            val encoded = encoder.encodeAuto(software)
+            val mostlyBlack = AccessibilityScreenshotDecision.isMostlyBlack(software)
+            val sdk = android.os.Build.VERSION.SDK_INT
+            if (sdk <= 33 && mostlyBlack) {
+                throw AndroidExecutionException("secure_screen_heuristic")
+            }
+            val voiceFlag = input["voice"]?.jsonPrimitive?.booleanOrNull == true
+            val encoded = if (voiceFlag) encoder.encodeVoice(software) else encoder.encodeAuto(software)
             try {
                 val completed = display.snapshot()
-                if (completed != admitted || encoded.width != admitted.width || encoded.height != admitted.height) {
+                if (!voiceFlag && (completed != admitted || encoded.width != admitted.width || encoded.height != admitted.height)) {
                     throw AndroidExecutionException("STALE_AUTHORITY")
                 }
-                encoded.transfer(admitted)
+                encoded.transfer(admitted, mostlyBlack)
             } catch (error: Throwable) {
                 encoded.discard()
                 throw error
@@ -327,6 +336,21 @@ private class AccessibilityVisualAdapter(
             software.recycle()
             buffer.close()
         }
+    }
+
+    private suspend fun key(request: AndroidExecutionRequest): AndroidExecutionResult {
+        val input = request.payloadObject()
+        if (input.keys != setOf("operation", "key_code") || input.requiredString("operation") != "key") {
+            throw AndroidExecutionException("INVALID_ARGUMENT")
+        }
+        val keyCode = input.requiredInt("key_code")
+        val action = AccessibilityScreenshotDecision.globalActionForKey(keyCode)
+            ?: throw AndroidExecutionException("UNSUPPORTED")
+        val delivered = withContext(Dispatchers.Main.immediate) {
+            service.performGlobalAction(action)
+        }
+        if (!delivered) throw AndroidExecutionException("IO_ERROR")
+        return deliveredResult()
     }
 
     private suspend fun nodeAction(
@@ -589,11 +613,7 @@ private class AccessibilityVisualAdapter(
                         if (continuation.isActive) {
                             continuation.resumeWithException(
                                 AndroidExecutionException(
-                                    if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
-                                        "RESOURCE_LIMIT"
-                                    } else {
-                                        "CAPABILITY_UNAVAILABLE"
-                                    },
+                                    AccessibilityScreenshotDecision.failureCode(errorCode),
                                 ),
                             )
                         }
@@ -842,3 +862,51 @@ private fun String.boundedUtf8(): String {
 
 private const val MAX_HIERARCHY_NODES = 5_000
 private const val MAX_NODE_STRING_BYTES = 4_096
+
+internal object AccessibilityScreenshotDecision {
+    const val SECURE_WINDOW_ERROR = 6
+
+    fun failureCode(errorCode: Int): String = when (errorCode) {
+        AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "RESOURCE_LIMIT"
+        SECURE_WINDOW_ERROR -> "secure_screen"
+        else -> "CAPABILITY_UNAVAILABLE"
+    }
+
+    fun globalActionForKey(keyCode: Int): Int? = when (keyCode) {
+        android.view.KeyEvent.KEYCODE_BACK -> AccessibilityService.GLOBAL_ACTION_BACK
+        android.view.KeyEvent.KEYCODE_HOME -> AccessibilityService.GLOBAL_ACTION_HOME
+        android.view.KeyEvent.KEYCODE_APP_SWITCH -> AccessibilityService.GLOBAL_ACTION_RECENTS
+        else -> null
+    }
+
+    fun isMostlyBlack(bitmap: Bitmap): Boolean {
+        val sample = lumaSample(bitmap)
+        return sample.first <= 8.0 && sample.second <= 16
+    }
+
+    /** Mean Y and max Y on a 32×32 grid, 8-bit, Y = (299R + 587G + 114B) / 1000. */
+    fun lumaSample(bitmap: Bitmap): Pair<Double, Int> {
+        val cols = 32
+        val rows = 32
+        var sum = 0L
+        var maxY = 0
+        var count = 0
+        val width = bitmap.width.coerceAtLeast(1)
+        val height = bitmap.height.coerceAtLeast(1)
+        for (row in 0 until rows) {
+            val y = (row * (height - 1)) / (rows - 1).coerceAtLeast(1)
+            for (col in 0 until cols) {
+                val x = (col * (width - 1)) / (cols - 1).coerceAtLeast(1)
+                val pixel = bitmap.getPixel(x, y)
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                val luma = (299 * r + 587 * g + 114 * b) / 1000
+                sum += luma
+                if (luma > maxY) maxY = luma
+                count += 1
+            }
+        }
+        return (sum.toDouble() / count) to maxY
+    }
+}

@@ -4,7 +4,7 @@
 use crate::{
     MCP_BODY_LIMIT_BYTES, McpFacade, McpHost, McpRequest, VoiceConnection, VoiceHttpResponse,
     VoiceMcp, VoiceToolExecutor, bearer_matches, path_secret_matches,
-    voice_mcp::{StubVoiceExecutor, voice_host_allowed, voice_origin_allowed},
+    voice_mcp::{voice_host_allowed, voice_origin_allowed},
 };
 use bytes::Bytes;
 use contract::ErrorCode;
@@ -41,7 +41,7 @@ const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 pub struct McpListenerConfig {
     pub tunnel_hostname: Option<String>,
     pub kill_flag: Arc<AtomicBool>,
-    pub voice_executor: Arc<dyn VoiceToolExecutor>,
+    pub voice_executor: Option<Arc<dyn VoiceToolExecutor>>,
 }
 
 impl Default for McpListenerConfig {
@@ -49,7 +49,7 @@ impl Default for McpListenerConfig {
         Self {
             tunnel_hostname: None,
             kill_flag: Arc::new(AtomicBool::new(false)),
-            voice_executor: Arc::new(StubVoiceExecutor),
+            voice_executor: None,
         }
     }
 }
@@ -106,7 +106,7 @@ pub struct McpListener {
 
 impl McpListener {
     /// Binds the IPv4 loopback endpoint and returns only once it accepts connections.
-    pub fn start<H: McpHost + 'static>(
+    pub fn start<H: McpHost + Clone + 'static>(
         port: u16,
         token: String,
         facade: McpFacade<H>,
@@ -114,7 +114,7 @@ impl McpListener {
         Self::start_with_config(port, token, facade, McpListenerConfig::default())
     }
 
-    pub fn start_with_config<H: McpHost + 'static>(
+    pub fn start_with_config<H: McpHost + Clone + 'static>(
         port: u16,
         token: String,
         facade: McpFacade<H>,
@@ -125,7 +125,7 @@ impl McpListener {
         Self::serve_with_config(listener, token, facade, config)
     }
 
-    pub fn serve<H: McpHost + 'static>(
+    pub fn serve<H: McpHost + Clone + 'static>(
         listener: StdTcpListener,
         token: String,
         facade: McpFacade<H>,
@@ -133,7 +133,7 @@ impl McpListener {
         Self::serve_with_config(listener, token, facade, McpListenerConfig::default())
     }
 
-    pub fn serve_with_config<H: McpHost + 'static>(
+    pub fn serve_with_config<H: McpHost + Clone + 'static>(
         listener: StdTcpListener,
         token: String,
         facade: McpFacade<H>,
@@ -153,9 +153,12 @@ impl McpListener {
             tokio::net::TcpListener::from_std(listener).map_err(|_| listener_failed())?
         };
         let token = Arc::new(RwLock::new(token));
+        let voice_executor = config.voice_executor.unwrap_or_else(|| {
+            Arc::new(crate::HostVoiceExecutor::new(facade.clone_host()))
+        });
         let voice = Arc::new(VoiceMcp::new(
             facade.product_version().to_owned(),
-            config.voice_executor,
+            voice_executor,
             Arc::clone(&config.kill_flag),
         ));
         let shared = Arc::new(ListenerShared {
@@ -464,6 +467,7 @@ mod tests {
     const TOKEN: &str = "tXw1sO3n6b2WqQm9J0gKf8yVhZcR4dLpA7eNuTiYkMs";
     const ROTATED: &str = "Q2Vk5Yv0nLm8sX1rT4aZ7uB3cW6eH9jK2pF5gD8iM0o";
 
+    #[derive(Clone)]
     struct CannedHost;
 
     impl McpHost for CannedHost {

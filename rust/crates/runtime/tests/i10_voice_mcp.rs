@@ -1,25 +1,23 @@
 //! P1-02 / P1-03 voice MCP adapter and public ingress tests (ephemeral loopback port).
 
 use runtime::{
-    McpArtifactReply, McpFacade, McpHost, McpListener, McpListenerConfig, McpRequest, PortFuture,
-    StubVoiceExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES, VoiceConnection, VoiceMcp,
-    VoiceToolExecutor, path_secret_matches,
+    HostVoiceExecutor, McpArtifactReply, McpFacade, McpHost, McpListener, McpListenerConfig,
+    McpRequest, PortFuture, StubVoiceExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
+    VoiceConnection, VoiceMcp, VoiceToolExecutor, compact_voice_projection, path_secret_matches,
 };
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener as StdTcpListener,
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::AtomicBool,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 const TOKEN: &str = "tXw1sO3n6b2WqQm9J0gKf8yVhZcR4dLpA7eNuTiYkMs";
 const TUNNEL_HOST: &str = "voice-test.example.trycloudflare.com";
 
+#[derive(Clone)]
 struct CannedHost;
 
 impl McpHost for CannedHost {
@@ -100,7 +98,7 @@ fn serve(
         McpListenerConfig {
             tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
             kill_flag: kill,
-            voice_executor: executor,
+            voice_executor: Some(executor),
         },
     )
     .unwrap();
@@ -667,4 +665,182 @@ fn mother_tool_loopback_still_works() {
     assert_eq!(status, 200);
     assert_eq!(body["result"]["structuredContent"], json!({"tasks": []}));
     served.stop();
+}
+
+fn sample_nodes() -> Value {
+    json!([
+        {
+            "node_ref": "n-container",
+            "class_name": "android.widget.FrameLayout",
+            "clickable": false,
+            "bounds": {"left": 0, "top": 0, "right": 100, "bottom": 100}
+        },
+        {
+            "node_ref": "n-dark",
+            "text": "Dark mode",
+            "clickable": true,
+            "resource_id": "android:id/title",
+            "bounds": {"left": 0, "top": 200, "right": 100, "bottom": 280}
+        }
+    ])
+}
+
+#[derive(Clone)]
+struct ScriptedVisualHost {
+    calls: Arc<Mutex<Vec<String>>>,
+    jpeg: PathBuf,
+}
+
+impl ScriptedVisualHost {
+    fn new() -> Self {
+        let jpeg = std::env::temp_dir().join(format!("voice-jpeg-{}.jpg", uuid::Uuid::new_v4()));
+        std::fs::write(&jpeg, [0xFF, 0xD8, 0xFF, 0xD9]).unwrap();
+        Self {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            jpeg,
+        }
+    }
+}
+
+impl McpHost for ScriptedVisualHost {
+    fn submit<'a>(&'a self, envelope: Vec<u8>) -> PortFuture<'a, Result<Vec<u8>, domain::DomainError>> {
+        Box::pin(async move {
+            let request: Value = serde_json::from_slice(&envelope).unwrap();
+            let payload = &request["payload"];
+            let tool = payload["tool"].as_str().unwrap_or("");
+            let action = payload["action"].as_str().unwrap_or("");
+            self.calls.lock().unwrap().push(format!("{tool}.{action}"));
+            let include_image = payload["input"]["include_image"] == json!(true);
+            let result = match (tool, action) {
+                ("visual", "observe") => json!({
+                    "observation_id": "11111111-1111-4111-8111-111111111111",
+                    "observed_at": "2026-01-01T00:00:00Z",
+                    "display": {"width": 1080, "height": 2400, "rotation": 0, "density_dpi": 480},
+                    "interact": {"coordinate": true, "ttl_ms": 300000},
+                    "foreground": {"package": "com.android.settings"},
+                    "nodes": sample_nodes(),
+                    "image_ref": if include_image { json!("artifact://image/1") } else { Value::Null },
+                    "image_format": if include_image { json!("jpeg") } else { Value::Null },
+                }),
+                ("visual", "interact") | ("android", "launch") => json!({"delivered": true}),
+                _ => json!({}),
+            };
+            Ok(serde_json::to_vec(&json!({
+                "protocol_version": 1,
+                "request_id": request["request_id"],
+                "outcome": "success",
+                "result": result,
+            }))
+            .unwrap())
+        })
+    }
+
+    fn artifact_query<'a>(
+        &'a self,
+        _query: Value,
+    ) -> PortFuture<'a, Result<McpArtifactReply, domain::DomainError>> {
+        let file = std::fs::File::open(&self.jpeg).unwrap();
+        let size = file.metadata().unwrap().len();
+        Box::pin(async move {
+            Ok(McpArtifactReply {
+                payload: json!({"kind": "image", "size": size, "mime": "image/jpeg", "uri": "artifact://image/1"}),
+                descriptor: Some(file),
+            })
+        })
+    }
+}
+
+fn serve_visual(host: ScriptedVisualHost) -> (u16, McpListener) {
+    let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let executor: Arc<dyn VoiceToolExecutor> = Arc::new(HostVoiceExecutor::new(host.clone()));
+    let facade = McpFacade::new(host, port, "0.1.0".to_owned()).unwrap();
+    let served = McpListener::serve_with_config(
+        listener,
+        TOKEN.to_owned(),
+        facade,
+        McpListenerConfig {
+            tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
+            kill_flag: Default::default(),
+            voice_executor: Some(executor),
+        },
+    )
+    .unwrap();
+    (port, served)
+}
+
+fn modern_call(port: u16, name: &str, arguments: Value) -> Value {
+    let host = format!("127.0.0.1:{port}");
+    let path = format!("/mcp/{TOKEN}");
+    let body = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": arguments,
+            "_meta": modern_meta()
+        }
+    });
+    let extra = [
+        ("MCP-Protocol-Version", "2026-07-28"),
+        ("Mcp-Method", "tools/call"),
+        ("Mcp-Name", name),
+    ];
+    let (status, _, json_body, _) = http(port, &host, &path, &extra, &body);
+    assert_eq!(status, 200, "{json_body}");
+    json_body
+}
+
+#[test]
+fn p1_04_projection_drops_textless_container() {
+    let observe = json!({
+        "foreground": {"package": "com.android.settings"},
+        "nodes": sample_nodes(),
+        "observation_id": "11111111-1111-4111-8111-111111111111",
+        "display": {"width": 1080, "height": 2400}
+    });
+    let projected = compact_voice_projection(&observe);
+    let refs: Vec<&str> = projected["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["node_ref"].as_str().unwrap())
+        .collect();
+    assert_eq!(refs, vec!["n-dark"]);
+    assert!(projected["nodes"][0].get("class_name").is_none());
+    assert_eq!(projected["foreground_package"], "com.android.settings");
+    assert_eq!(projected["summary"], "Settings, Dark mode");
+}
+
+#[test]
+fn p1_04_tap_returns_tree_without_image() {
+    let (port, served) = serve_visual(ScriptedVisualHost::new());
+    let body = modern_call(port, "tap", json!({"text": "Dark mode"}));
+    let structured = &body["result"]["structuredContent"];
+    assert!(structured.get("latency_ms").is_some(), "{structured}");
+    assert!(structured["nodes"].as_array().unwrap().iter().all(|node| node.get("class_name").is_none()));
+    let content = body["result"]["content"].as_array().unwrap();
+    assert!(content.iter().all(|block| block["type"] != "image"), "{content:?}");
+    served.stop();
+}
+
+#[test]
+fn p1_04_screenshot_returns_jpeg_block() {
+    let (port, served) = serve_visual(ScriptedVisualHost::new());
+    let body = modern_call(port, "screenshot", json!({}));
+    let content = body["result"]["content"].as_array().unwrap();
+    let image = content.iter().find(|block| block["type"] == "image").expect("jpeg block");
+    assert_eq!(image["mimeType"], "image/jpeg");
+    let data = image["data"].as_str().unwrap();
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).unwrap();
+    assert!(bytes.len() < 150 * 1024);
+    assert!(body["result"]["structuredContent"].get("latency_ms").is_some());
+    served.stop();
+}
+
+#[test]
+fn p1_04_tools_list_names_exactly_eight() {
+    assert_eq!(
+        VOICE_TOOL_NAMES,
+        ["screen", "tap", "long_press", "swipe", "type", "open_app", "navigate", "screenshot"]
+    );
 }

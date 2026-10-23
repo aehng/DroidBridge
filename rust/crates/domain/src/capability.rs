@@ -112,7 +112,11 @@ pub fn derive_capabilities(
         visual_image: gated(visual_image),
         visual_hierarchy: gated(visual_base),
         visual_coordinate_input: gated(visual_base),
-        visual_key_input: gated(any(&[grants.magisk_root.state, grants.shizuku_shell.state])),
+        visual_key_input: gated(any(&[
+            grants.magisk_root.state,
+            grants.shizuku_shell.state,
+            grants.visual_accessibility.state,
+        ])),
         visual_text_input: gated(visual_text),
         automation_persistent_time: gated(persistent_time),
         android_notification_access: gated(notifications),

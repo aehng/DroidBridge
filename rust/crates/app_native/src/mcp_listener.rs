@@ -97,11 +97,11 @@ pub(crate) fn initialize_host_bridge(env: &mut jni::Env<'_>) -> jni::errors::Res
 pub(crate) fn kotlin_facade(
     port: u16,
     product_version: String,
-) -> Result<McpFacade<KotlinMcpHost>, DomainError> {
+) -> Result<McpFacade<Arc<KotlinMcpHost>>, DomainError> {
     if port != MCP_STABLE_PORT && port != MCP_DEBUG_PORT {
         return Err(DomainError::invalid("MCP port is not a build endpoint"));
     }
-    McpFacade::new(KotlinMcpHost::new(), port, product_version)
+    McpFacade::new(Arc::new(KotlinMcpHost::new()), port, product_version)
 }
 
 impl McpHost for KotlinMcpHost {

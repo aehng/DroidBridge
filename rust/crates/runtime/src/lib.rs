@@ -40,8 +40,8 @@ pub use ingress::{ToolFailure, submit_public};
 pub use mcp::*;
 pub use mcp_listener::{McpListener, McpListenerConfig};
 pub use voice_mcp::{
-    StubVoiceExecutor, VoiceConnection, VoiceHttpResponse, VoiceMcp, VoiceToolExecutor,
-    VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
+    compact_voice_projection, HostVoiceExecutor, StubVoiceExecutor, VoiceConnection,
+    VoiceHttpResponse, VoiceMcp, VoiceToolExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
 };
 pub use network::*;
 pub use ports::*;

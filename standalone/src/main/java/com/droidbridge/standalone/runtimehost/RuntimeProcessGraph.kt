@@ -167,6 +167,7 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidPrimitive.AccessibilityNodeAction,
             AndroidPrimitive.AccessibilityGesture,
             AndroidPrimitive.AccessibilityText,
+            AndroidPrimitive.AccessibilityKey,
             AndroidPrimitive.VisualImageTransform,
             AndroidPrimitive.PackageInspect,
             AndroidPrimitive.LaunchActivity,
@@ -221,6 +222,7 @@ private class RoutedAndroidExecution(
             AndroidPrimitive.AccessibilityNodeAction,
             AndroidPrimitive.AccessibilityGesture,
             AndroidPrimitive.AccessibilityText,
+            AndroidPrimitive.AccessibilityKey,
             -> (accessibility() ?: throw AndroidExecutionException(CAPABILITY_UNAVAILABLE))
                 .execute(request)
             AndroidPrimitive.PackageInspect,

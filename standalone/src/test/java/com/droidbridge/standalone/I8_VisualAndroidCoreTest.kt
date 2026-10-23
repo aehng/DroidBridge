@@ -24,6 +24,35 @@ import org.junit.Test
 
 class I8_VisualAndroidCoreTest {
     @Test
+    fun accessibilityGlobalKeysMapBackHomeRecents() {
+        assertEquals(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+            com.droidbridge.standalone.execution.android.AccessibilityScreenshotDecision.globalActionForKey(
+                android.view.KeyEvent.KEYCODE_BACK,
+            ),
+        )
+        assertEquals(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME,
+            com.droidbridge.standalone.execution.android.AccessibilityScreenshotDecision.globalActionForKey(
+                android.view.KeyEvent.KEYCODE_HOME,
+            ),
+        )
+        assertEquals(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS,
+            com.droidbridge.standalone.execution.android.AccessibilityScreenshotDecision.globalActionForKey(
+                android.view.KeyEvent.KEYCODE_APP_SWITCH,
+            ),
+        )
+        assertNull(
+            com.droidbridge.standalone.execution.android.AccessibilityScreenshotDecision.globalActionForKey(24),
+        )
+        assertEquals(
+            "secure_screen",
+            com.droidbridge.standalone.execution.android.AccessibilityScreenshotDecision.failureCode(6),
+        )
+    }
+
+    @Test
     fun anObservationWaitsForTheSceneToHoldStillButNeverWithoutBound() {
         var now = 10_000L
         val slept = mutableListOf<Long>()

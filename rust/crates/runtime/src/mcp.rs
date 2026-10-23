@@ -10,7 +10,7 @@ use base64::{
 use contract::{ErrorCode, PublicPayload, RequestId};
 use domain::DomainError;
 use serde_json::{Map, Value, json};
-use std::{collections::BTreeSet, io::Read};
+use std::{collections::BTreeSet, io::Read, sync::Arc};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 pub const MCP_BODY_LIMIT_BYTES: usize = 262_144;
@@ -402,6 +402,19 @@ pub trait McpHost: Send + Sync {
     ) -> PortFuture<'a, Result<McpArtifactReply, DomainError>>;
 }
 
+impl<T: McpHost + ?Sized> McpHost for Arc<T> {
+    fn submit<'a>(&'a self, envelope: Vec<u8>) -> PortFuture<'a, Result<Vec<u8>, DomainError>> {
+        (**self).submit(envelope)
+    }
+
+    fn artifact_query<'a>(
+        &'a self,
+        query: Value,
+    ) -> PortFuture<'a, Result<McpArtifactReply, DomainError>> {
+        (**self).artifact_query(query)
+    }
+}
+
 pub struct McpFacade<H> {
     host: H,
     port: u16,
@@ -433,6 +446,13 @@ impl<H: McpHost> McpFacade<H> {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn clone_host(&self) -> H
+    where
+        H: Clone,
+    {
+        self.host.clone()
     }
 
     /// Handles one HTTP request against the token currently committed by the settings owner.

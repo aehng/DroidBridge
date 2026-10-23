@@ -76,11 +76,17 @@ where
             ProviderToken::Accessibility => dispatch_encoded_image(
                 "visual.accessibility",
                 "AccessibilityObserve",
-                &serde_json::json!({
-                    "operation":"screenshot",
-                    "display":display.display,
-                    "display_generation":display.display_generation,
-                }),
+                &{
+                    let mut payload = serde_json::json!({
+                        "operation":"screenshot",
+                        "display":display.display,
+                        "display_generation":display.display_generation,
+                    });
+                    if runtime::voice_jpeg_encode() {
+                        payload["voice"] = serde_json::json!(true);
+                    }
+                    payload
+                },
                 execution,
                 None,
                 true,
@@ -250,6 +256,20 @@ where
                     "text":text,
                     "expected_package":expected_package,
                 }),
+                execution,
+            )
+            .map_err(clean_failure),
+            (
+                ProviderToken::Accessibility,
+                VisualInteractionRequest::Key {
+                    key_code,
+                    meta_state: _,
+                    expected_package: _,
+                },
+            ) => dispatch_completed(
+                "visual.accessibility",
+                "AccessibilityKey",
+                &serde_json::json!({"operation":"key","key_code":key_code}),
                 execution,
             )
             .map_err(clean_failure),

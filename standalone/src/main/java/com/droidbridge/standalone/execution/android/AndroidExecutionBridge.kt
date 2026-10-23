@@ -29,6 +29,7 @@ enum class AndroidPrimitive {
     AccessibilityNodeAction,
     AccessibilityGesture,
     AccessibilityText,
+    AccessibilityKey,
     MediaProjectionCapture,
     VisualImageTransform,
     AndroidNetworkSnapshot,

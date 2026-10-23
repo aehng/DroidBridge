@@ -433,7 +433,7 @@ async fn i8_vis_g01_observe_freezes_display_and_each_selected_source_before_side
         primitive.providers(),
         vec![
             runtime::ProviderToken::AppFramework,
-            runtime::ProviderToken::Shizuku,
+            runtime::ProviderToken::Accessibility,
             runtime::ProviderToken::Accessibility,
         ],
     );

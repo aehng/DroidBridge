@@ -46,6 +46,8 @@ pub struct EncodedImageWire {
     pub display: Option<DisplayGeometry>,
     #[serde(default)]
     pub display_generation: Option<u64>,
+    #[serde(default)]
+    pub image_mostly_black: Option<bool>,
 }
 
 pub fn decode_display(payload: &[u8]) -> Result<VisualDisplaySnapshot, DomainError> {

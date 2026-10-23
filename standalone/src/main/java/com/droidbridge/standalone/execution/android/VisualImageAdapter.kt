@@ -85,7 +85,10 @@ internal data class EncodedVisualImage(
         if (file.exists() && !file.delete()) throw AndroidExecutionException("IO_ERROR")
     }
 
-    fun transfer(display: VisualDisplaySnapshot? = null): AndroidExecutionResult {
+    fun transfer(
+        display: VisualDisplaySnapshot? = null,
+        imageMostlyBlack: Boolean = false,
+    ): AndroidExecutionResult {
         val size = file.length()
         if (size !in 1..MAX_ENCODED_BYTES || width !in 1..16_384 || height !in 1..16_384) {
             file.delete()
@@ -111,6 +114,9 @@ internal data class EncodedVisualImage(
                 put("display", it.geometryJson())
                 put("display_generation", it.generation)
             }
+            if (imageMostlyBlack) {
+                put("image_mostly_black", true)
+            }
         }
         return AndroidExecutionResult(
             payload.toString().encodeToByteArray(),
@@ -133,25 +139,60 @@ internal class VisualImageEncoder(private val context: Context) {
         }
     }
 
-    suspend fun encodeAuto(bitmap: Bitmap): EncodedVisualImage {
+    suspend fun encodeAuto(bitmap: Bitmap): EncodedVisualImage =
+        encode(bitmap, JPEG_QUALITY, EncodedVisualImage.MAX_ENCODED_BYTES)
+
+    suspend fun encodeVoice(bitmap: Bitmap): EncodedVisualImage {
+        val longEdge = maxOf(bitmap.width, bitmap.height)
+        val scaled = if (longEdge > VOICE_LONG_EDGE) {
+            val scale = VOICE_LONG_EDGE.toFloat() / longEdge
+            val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+            val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+            Bitmap.createScaledBitmap(bitmap, width, height, true)
+        } else {
+            bitmap
+        }
+        return try {
+            encode(scaled, VOICE_JPEG_QUALITY, VOICE_MAX_BYTES)
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+
+    private suspend fun encode(
+        bitmap: Bitmap,
+        quality: Int,
+        maxBytes: Long,
+    ): EncodedVisualImage {
         var ownedFile: File? = null
         return try {
             withTimeout(PHASE_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
-                    val file = File.createTempFile(OUTPUT_PREFIX, ".jpg", context.cacheDir)
-                    ownedFile = file
-                    try {
-                        FileOutputStream(file).use { output ->
-                            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)) {
+                    var currentQuality = quality
+                    var file: File? = null
+                    while (true) {
+                        val next = File.createTempFile(OUTPUT_PREFIX, ".jpg", context.cacheDir)
+                        ownedFile?.delete()
+                        ownedFile = next
+                        file = next
+                        FileOutputStream(next).use { output ->
+                            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, currentQuality, output)) {
                                 throw AndroidExecutionException("IO_ERROR")
                             }
                             output.fd.sync()
                         }
-                        EncodedVisualImage(file, "jpeg", "image/jpeg", bitmap.width, bitmap.height)
-                    } catch (error: Throwable) {
-                        file.delete()
-                        throw error
+                        if (next.length() <= maxBytes || currentQuality <= 20) {
+                            if (next.length() !in 1..maxBytes && maxBytes < EncodedVisualImage.MAX_ENCODED_BYTES) {
+                                if (next.length() > EncodedVisualImage.MAX_ENCODED_BYTES) {
+                                    throw AndroidExecutionException("RESOURCE_LIMIT")
+                                }
+                            }
+                            break
+                        }
+                        currentQuality -= 10
                     }
+                    val out = file ?: throw AndroidExecutionException("IO_ERROR")
+                    EncodedVisualImage(out, "jpeg", "image/jpeg", bitmap.width, bitmap.height)
                 }
             }.also { ownedFile = null }
         } catch (error: Throwable) {
@@ -163,6 +204,9 @@ internal class VisualImageEncoder(private val context: Context) {
     private companion object {
         const val PHASE_TIMEOUT_MS = 10_000L
         const val JPEG_QUALITY = 85
+        const val VOICE_JPEG_QUALITY = 50
+        const val VOICE_LONG_EDGE = 768
+        const val VOICE_MAX_BYTES = 150_000L
         const val OUTPUT_PREFIX = "droidbridge-visual-"
     }
 }

@@ -147,8 +147,40 @@ fn i2_g01_domain_reducers_and_resolver_preserve_authority() {
     )
     .unwrap();
     assert_eq!(admitted.provider(), Provider::Accessibility);
+    let image_with_shizuku = resolve_executor(
+        RuntimeHost::ApkRuntime,
+        fence(),
+        facts,
+        ExecutorRequest::Visual(VisualRoute::Image),
+    )
+    .unwrap();
+    assert_eq!(image_with_shizuku.provider(), Provider::Accessibility);
+    let key_with_shizuku = resolve_executor(
+        RuntimeHost::ApkRuntime,
+        fence(),
+        facts,
+        ExecutorRequest::Visual(VisualRoute::KeyInput),
+    )
+    .unwrap();
+    assert_eq!(key_with_shizuku.provider(), Provider::Accessibility);
     facts.shizuku = Unavailable;
     assert_eq!(admitted.provider(), Provider::Accessibility);
+    let image_without_shizuku = resolve_executor(
+        RuntimeHost::ApkRuntime,
+        fence(),
+        facts,
+        ExecutorRequest::Visual(VisualRoute::Image),
+    )
+    .unwrap();
+    assert_eq!(image_without_shizuku.provider(), Provider::Accessibility);
+    let key_without_shizuku = resolve_executor(
+        RuntimeHost::ApkRuntime,
+        fence(),
+        facts,
+        ExecutorRequest::Visual(VisualRoute::KeyInput),
+    )
+    .unwrap();
+    assert_eq!(key_without_shizuku.provider(), Provider::Accessibility);
     assert_eq!(facts.shizuku, Unavailable);
     assert_eq!(admitted.fence().host_generation, 3);
     assert_eq!(admitted.capability_generation(), 1);
