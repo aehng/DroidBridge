@@ -284,20 +284,20 @@ fn tool_examples(name: &str) -> Result<Value, DomainError> {
 }
 
 const REF_EXPIRY_BATCH: usize = 32;
-const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
-const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+pub(crate) const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+pub(crate) const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
 const META_CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
-const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+pub(crate) const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
 const META_REQUEST_ID: &str = "io.droidbridge/requestId";
 const META_REF_EXPIRIES: &str = "io.droidbridge/refExpiries";
 
-const PARSE_ERROR: i64 = -32700;
-const INVALID_REQUEST: i64 = -32600;
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
+pub(crate) const PARSE_ERROR: i64 = -32700;
+pub(crate) const INVALID_REQUEST: i64 = -32600;
+pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
+pub(crate) const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
-const HEADER_MISMATCH: i64 = -32020;
-const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
+pub(crate) const HEADER_MISMATCH: i64 = -32020;
+pub(crate) const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
 
 /// One HTTP request as framed by the loopback listener.
 #[derive(Clone, Debug, Default)]
@@ -425,6 +425,14 @@ impl<H: McpHost> McpFacade<H> {
             product_version,
             tools: tool_definitions()?,
         })
+    }
+
+    pub fn product_version(&self) -> &str {
+        &self.product_version
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     /// Handles one HTTP request against the token currently committed by the settings owner.
@@ -1098,7 +1106,7 @@ pub fn mcp_resource_cursor_ref(cursor: &str) -> Option<String> {
     (mcp_resource_cursor(&artifact_ref) == cursor).then_some(artifact_ref)
 }
 
-fn validate_metadata_headers(
+pub(crate) fn validate_metadata_headers(
     request: &McpRequest,
     id: &Value,
     method: &str,
@@ -1503,7 +1511,7 @@ fn collect_refs(value: &Value, refs: &mut BTreeSet<String>) {
     }
 }
 
-fn header_values<'a>(request: &'a McpRequest, name: &str) -> Vec<&'a str> {
+pub(crate) fn header_values<'a>(request: &'a McpRequest, name: &str) -> Vec<&'a str> {
     request
         .headers
         .iter()
@@ -1512,7 +1520,7 @@ fn header_values<'a>(request: &'a McpRequest, name: &str) -> Vec<&'a str> {
         .collect()
 }
 
-fn single_header<'a>(request: &'a McpRequest, name: &str) -> Option<&'a str> {
+pub(crate) fn single_header<'a>(request: &'a McpRequest, name: &str) -> Option<&'a str> {
     match header_values(request, name).as_slice() {
         [value] => Some(value),
         _ => None,
@@ -1535,7 +1543,21 @@ fn origin_is_loopback(request: &McpRequest) -> bool {
     }
 }
 
-fn bearer_matches(request: &McpRequest, accepted_token: &str) -> bool {
+/// Constant-time comparison of a path token against the committed secret.
+pub fn path_secret_matches(path_token: &str, accepted_token: &str) -> bool {
+    if accepted_token.is_empty() || path_token.len() != accepted_token.len() {
+        return false;
+    }
+    path_token
+        .bytes()
+        .zip(accepted_token.bytes())
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}
+
+pub(crate) fn bearer_matches(request: &McpRequest, accepted_token: &str) -> bool {
     let Some(token) =
         single_header(request, "authorization").and_then(|value| value.strip_prefix("Bearer "))
     else {
@@ -1553,7 +1575,7 @@ fn bearer_matches(request: &McpRequest, accepted_token: &str) -> bool {
         == 0
 }
 
-fn content_type_is_json(request: &McpRequest) -> bool {
+pub(crate) fn content_type_is_json(request: &McpRequest) -> bool {
     single_header(request, "content-type").is_some_and(|value| {
         value
             .split(';')
@@ -1583,7 +1605,7 @@ fn decode_name_header(value: &str) -> Option<String> {
     }
 }
 
-fn is_protocol_date(value: &str) -> bool {
+pub(crate) fn is_protocol_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 10
         && bytes.iter().enumerate().all(|(index, byte)| match index {
@@ -1596,11 +1618,11 @@ fn only_keys(params: &Map<String, Value>, allowed: &[&str]) -> bool {
     params.keys().all(|key| allowed.contains(&key.as_str()))
 }
 
-fn rpc_result(id: Value, result: Value) -> McpResponse {
+pub(crate) fn rpc_result(id: Value, result: Value) -> McpResponse {
     json_response(200, &json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
-fn rpc_error(status: u16, id: Value, code: i64, message: &str, data: Option<Value>) -> McpResponse {
+pub(crate) fn rpc_error(status: u16, id: Value, code: i64, message: &str, data: Option<Value>) -> McpResponse {
     let mut error = json!({"code": code, "message": message});
     if let Some(data) = data {
         error["data"] = data;
@@ -1608,13 +1630,13 @@ fn rpc_error(status: u16, id: Value, code: i64, message: &str, data: Option<Valu
     json_response(status, &json!({"jsonrpc": "2.0", "id": id, "error": error}))
 }
 
-fn invalid_params(id: Value, data: Option<Value>) -> McpResponse {
+pub(crate) fn invalid_params(id: Value, data: Option<Value>) -> McpResponse {
     rpc_error(200, id, INVALID_PARAMS, "Invalid params", data)
 }
 
 /// Names the field a rejected request got wrong, so a caller can repair the call from the response
 /// alone. The refused value itself is never echoed: it can be arbitrarily large or sensitive.
-fn field_detail(field: &str, reason: &str) -> Option<Value> {
+pub(crate) fn field_detail(field: &str, reason: &str) -> Option<Value> {
     Some(json!({"field": field, "reason": reason}))
 }
 

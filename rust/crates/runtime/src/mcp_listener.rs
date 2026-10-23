@@ -1,7 +1,11 @@
 //! The loopback MCP listener (S-MCP-001, S-STACK-011). Pinned Hyper frames HTTP/1.1 and the shared
 //! facade owns every protocol decision; the host it is built with is the authoritative Runtime.
 
-use crate::{MCP_BODY_LIMIT_BYTES, McpFacade, McpHost, McpRequest};
+use crate::{
+    MCP_BODY_LIMIT_BYTES, McpFacade, McpHost, McpRequest, VoiceConnection, VoiceHttpResponse,
+    VoiceMcp, VoiceToolExecutor, bearer_matches, path_secret_matches,
+    voice_mcp::{StubVoiceExecutor, voice_host_allowed, voice_origin_allowed},
+};
 use bytes::Bytes;
 use contract::ErrorCode;
 use domain::DomainError;
@@ -13,8 +17,11 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use std::{
     convert::Infallible,
     net::{Ipv4Addr, SocketAddr, TcpListener as StdTcpListener},
-    sync::{Arc, RwLock},
-    time::Duration,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::AtomicBool,
+    },
+    time::{Duration, Instant},
 };
 use tokio::sync::Semaphore;
 
@@ -30,6 +37,68 @@ const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// that went away) and must not end the listener.
 const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
 
+/// Optional public-ingress settings. Mother-tool loopback callers can leave this defaulted.
+pub struct McpListenerConfig {
+    pub tunnel_hostname: Option<String>,
+    pub kill_flag: Arc<AtomicBool>,
+    pub voice_executor: Arc<dyn VoiceToolExecutor>,
+}
+
+impl Default for McpListenerConfig {
+    fn default() -> Self {
+        Self {
+            tunnel_hostname: None,
+            kill_flag: Arc::new(AtomicBool::new(false)),
+            voice_executor: Arc::new(StubVoiceExecutor),
+        }
+    }
+}
+
+struct TokenBucket {
+    tokens: f64,
+    last: Instant,
+    rate_per_sec: f64,
+    burst: f64,
+}
+
+impl TokenBucket {
+    fn new(rate_per_sec: f64, burst: f64) -> Self {
+        Self {
+            tokens: burst,
+            last: Instant::now(),
+            rate_per_sec,
+            burst,
+        }
+    }
+
+    fn try_take(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate_per_sec).min(self.burst);
+        self.last = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+struct IngressLimits {
+    authenticated: Mutex<TokenBucket>,
+    auth_failures: Mutex<TokenBucket>,
+}
+
+impl IngressLimits {
+    fn new() -> Self {
+        Self {
+            authenticated: Mutex::new(TokenBucket::new(1.0, 4.0)),
+            auth_failures: Mutex::new(TokenBucket::new(1.0, 10.0)),
+        }
+    }
+}
+
 pub struct McpListener {
     runtime: tokio::runtime::Runtime,
     token: Arc<RwLock<String>>,
@@ -42,15 +111,33 @@ impl McpListener {
         token: String,
         facade: McpFacade<H>,
     ) -> Result<Self, DomainError> {
+        Self::start_with_config(port, token, facade, McpListenerConfig::default())
+    }
+
+    pub fn start_with_config<H: McpHost + 'static>(
+        port: u16,
+        token: String,
+        facade: McpFacade<H>,
+        config: McpListenerConfig,
+    ) -> Result<Self, DomainError> {
         let listener = StdTcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
             .map_err(|_| listener_failed())?;
-        Self::serve(listener, token, facade)
+        Self::serve_with_config(listener, token, facade, config)
     }
 
     pub fn serve<H: McpHost + 'static>(
         listener: StdTcpListener,
         token: String,
         facade: McpFacade<H>,
+    ) -> Result<Self, DomainError> {
+        Self::serve_with_config(listener, token, facade, McpListenerConfig::default())
+    }
+
+    pub fn serve_with_config<H: McpHost + 'static>(
+        listener: StdTcpListener,
+        token: String,
+        facade: McpFacade<H>,
+        config: McpListenerConfig,
     ) -> Result<Self, DomainError> {
         listener
             .set_nonblocking(true)
@@ -66,7 +153,19 @@ impl McpListener {
             tokio::net::TcpListener::from_std(listener).map_err(|_| listener_failed())?
         };
         let token = Arc::new(RwLock::new(token));
-        runtime.spawn(accept_loop(listener, Arc::new(facade), Arc::clone(&token)));
+        let voice = Arc::new(VoiceMcp::new(
+            facade.product_version().to_owned(),
+            config.voice_executor,
+            Arc::clone(&config.kill_flag),
+        ));
+        let shared = Arc::new(ListenerShared {
+            facade: Arc::new(facade),
+            token: Arc::clone(&token),
+            voice,
+            tunnel_hostname: config.tunnel_hostname,
+            limits: IngressLimits::new(),
+        });
+        runtime.spawn(accept_loop(listener, shared));
         Ok(Self { runtime, token })
     }
 
@@ -87,10 +186,17 @@ impl McpListener {
     }
 }
 
-async fn accept_loop<H: McpHost + 'static>(
-    listener: tokio::net::TcpListener,
+struct ListenerShared<H> {
     facade: Arc<McpFacade<H>>,
     token: Arc<RwLock<String>>,
+    voice: Arc<VoiceMcp>,
+    tunnel_hostname: Option<String>,
+    limits: IngressLimits,
+}
+
+async fn accept_loop<H: McpHost + 'static>(
+    listener: tokio::net::TcpListener,
+    shared: Arc<ListenerShared<H>>,
 ) {
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
@@ -100,12 +206,12 @@ async fn accept_loop<H: McpHost + 'static>(
         };
         match listener.accept().await {
             Ok((stream, _)) => {
-                let facade = Arc::clone(&facade);
-                let token = Arc::clone(&token);
+                let shared = Arc::clone(&shared);
                 tokio::spawn(async move {
                     let _permit = permit;
+                    let conn = Arc::new(VoiceConnection::default());
                     let service = service_fn(move |request| {
-                        respond(request, Arc::clone(&facade), Arc::clone(&token))
+                        respond(request, Arc::clone(&shared), Arc::clone(&conn))
                     });
                     // A client disconnect aborts only its own exchange (S-MCP-001); an admitted
                     // Task stays Runtime-owned, so nothing is left to settle here.
@@ -121,16 +227,23 @@ async fn accept_loop<H: McpHost + 'static>(
     }
 }
 
+enum Route {
+    Facade,
+    Voice,
+    NotFound,
+    Forbidden,
+    Unauthorized,
+}
+
 async fn respond<H: McpHost>(
     request: Request<Incoming>,
-    facade: Arc<McpFacade<H>>,
-    token: Arc<RwLock<String>>,
+    shared: Arc<ListenerShared<H>>,
+    conn: Arc<VoiceConnection>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    if request.uri().path() != "/mcp" {
-        return Ok(empty(StatusCode::NOT_FOUND));
-    }
-    let method = request.method().as_str().to_owned();
-    let headers = request
+    let path = request.uri().path().to_owned();
+    let http_method = request.method().clone();
+    let method = http_method.as_str().to_owned();
+    let headers: Vec<(String, String)> = request
         .headers()
         .iter()
         .map(|(name, value)| {
@@ -140,26 +253,154 @@ async fn respond<H: McpHost>(
             )
         })
         .collect();
+    let mcp_request_head = McpRequest {
+        method: method.clone(),
+        headers: headers.clone(),
+        body: Vec::new(),
+    };
+    let port = shared.facade.port();
+    let accepted = shared
+        .token
+        .read()
+        .map(|token| token.clone())
+        .unwrap_or_default();
+    let tunnel = shared.tunnel_hostname.as_deref();
+
+    let mcp_path = path == "/mcp" || path.starts_with("/mcp/");
+    if http_method != hyper::Method::POST {
+        if mcp_path {
+            return Ok(empty(StatusCode::METHOD_NOT_ALLOWED));
+        }
+        return Ok(empty(StatusCode::NOT_FOUND));
+    }
+
+    let route = classify_route(&path, &mcp_request_head, port, tunnel, &accepted);
+
+    match route {
+        Route::NotFound => return Ok(empty(StatusCode::NOT_FOUND)),
+        Route::Forbidden => return Ok(empty(StatusCode::FORBIDDEN)),
+        Route::Unauthorized => {
+            if !take_auth_failure(&shared.limits) {
+                return Ok(empty(StatusCode::TOO_MANY_REQUESTS));
+            }
+            return Ok(empty(StatusCode::UNAUTHORIZED));
+        }
+        Route::Facade | Route::Voice => {}
+    }
+
     let body =
         match tokio::time::timeout(BODY_READ_TIMEOUT, bounded_body(request.into_body())).await {
             Ok(Ok(body)) => body,
             Ok(Err(_)) => return Ok(empty(StatusCode::BAD_REQUEST)),
             Err(_) => return Ok(empty(StatusCode::REQUEST_TIMEOUT)),
         };
-    // A poisoned token slot admits nobody rather than a stale token.
-    let accepted = token.read().map(|token| token.clone()).unwrap_or_default();
-    let response = facade
-        .handle(
-            McpRequest {
-                method,
-                headers,
-                body,
-            },
-            &accepted,
+    let mcp_request = McpRequest {
+        method,
+        headers,
+        body,
+    };
+
+    match route {
+        Route::Facade => {
+            let response = shared.facade.handle(mcp_request, &accepted).await;
+            Ok(encode_facade(response))
+        }
+        Route::Voice => {
+            if !take_authenticated(&shared.limits) {
+                return Ok(rate_limited_voice(&mcp_request));
+            }
+            let response = shared.voice.handle(&mcp_request, conn.as_ref()).await;
+            Ok(encode_voice(response))
+        }
+        _ => Ok(empty(StatusCode::INTERNAL_SERVER_ERROR)),
+    }
+}
+
+fn classify_route(
+    path: &str,
+    request: &McpRequest,
+    port: u16,
+    tunnel_hostname: Option<&str>,
+    accepted: &str,
+) -> Route {
+    if path == "/mcp/" {
+        return Route::NotFound;
+    }
+    if let Some(segment) = path.strip_prefix("/mcp/") {
+        if segment.is_empty() || segment.contains('/') {
+            return Route::NotFound;
+        }
+        if !path_secret_matches(segment, accepted) {
+            return Route::NotFound;
+        }
+        if !voice_host_allowed(request, port, tunnel_hostname) {
+            return Route::Forbidden;
+        }
+        if !voice_origin_allowed(request) {
+            return Route::Forbidden;
+        }
+        return Route::Voice;
+    }
+    if path != "/mcp" {
+        return Route::NotFound;
+    }
+    let host = crate::single_header(request, "host").unwrap_or("");
+    let loopback = format!("127.0.0.1:{port}");
+    let localhost = format!("localhost:{port}");
+    if host.eq_ignore_ascii_case(&loopback) || host.eq_ignore_ascii_case(&localhost) {
+        return Route::Facade;
+    }
+    if tunnel_hostname.is_some_and(|name| host.eq_ignore_ascii_case(name)) {
+        if !voice_origin_allowed(request) {
+            return Route::Forbidden;
+        }
+        if !bearer_matches(request, accepted) {
+            return Route::Unauthorized;
+        }
+        return Route::Voice;
+    }
+    Route::Forbidden
+}
+
+fn take_authenticated(limits: &IngressLimits) -> bool {
+    limits.authenticated.lock().unwrap().try_take()
+}
+
+fn take_auth_failure(limits: &IngressLimits) -> bool {
+    limits.auth_failures.lock().unwrap().try_take()
+}
+
+fn rate_limited_voice(request: &McpRequest) -> Response<Full<Bytes>> {
+    let parsed = serde_json::from_slice::<serde_json::Value>(&request.body).ok();
+    let id = parsed
+        .as_ref()
+        .and_then(|value| value.get("id").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    let is_call = parsed
+        .as_ref()
+        .and_then(|value| value.get("method").and_then(serde_json::Value::as_str))
+        == Some("tools/call");
+    if !is_call {
+        return empty(StatusCode::TOO_MANY_REQUESTS);
+    }
+    let mut response = encode_voice(
+        crate::rpc_result(
+            id,
+            serde_json::json!({
+                "content": [{"type": "text", "text": "rate_limited"}],
+                "structuredContent": {"code": "rate_limited", "retryable": true},
+                "isError": true,
+            }),
         )
-        .await;
+        .into(),
+    );
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    response
+}
+
+fn encode_facade(response: crate::McpResponse) -> Response<Full<Bytes>> {
     let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let built = match response.body {
+    match response.body {
         Some(body) => Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "application/json")
@@ -167,8 +408,24 @@ async fn respond<H: McpHost>(
         None => Response::builder()
             .status(status)
             .body(Full::new(Bytes::new())),
-    };
-    Ok(built.unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR)))
+    }
+    .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+fn encode_voice(response: VoiceHttpResponse) -> Response<Full<Bytes>> {
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut builder = Response::builder().status(status);
+    if response.body.is_some() {
+        builder = builder.header(header::CONTENT_TYPE, "application/json");
+    }
+    for (name, value) in &response.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
+    match response.body {
+        Some(body) => builder.body(Full::new(Bytes::from(body))),
+        None => builder.body(Full::new(Bytes::new())),
+    }
+    .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 /// Buffers at most one byte past the S-MCP-001 cap, which is enough for the facade to answer 413

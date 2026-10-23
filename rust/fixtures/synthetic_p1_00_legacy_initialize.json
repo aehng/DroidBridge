@@ -1,0 +1,14 @@
+{
+  "_comment": "Synthetic P1-00 stand-in for a ChatGPT connector initialize (legacy handshake era). Replace with the captured request from P1-00.",
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-11-25",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "chatgpt-synthetic",
+      "version": "0.0-synthetic"
+    }
+  }
+}
