@@ -46,6 +46,7 @@ internal class RelayClient(
     private var worker: Thread? = null
     private var socket: RelayWebSocket? = null
     private var generation = 0L
+    private var workerGeneration = -1L
     private var backoffMs = RELAY_INITIAL_BACKOFF_MS
 
     init {
@@ -118,6 +119,12 @@ internal class RelayClient(
             return
         }
         synchronized(lock) {
+            // Idempotent: the service calls start() on every onStartCommand/restore.
+            // Bumping the generation here used to kill the live socket each time,
+            // leaving the relay stuck in Connecting.
+            if (wanted.get() && worker?.isAlive == true && workerGeneration == generation) {
+                return@synchronized
+            }
             wanted.set(true)
             generation += 1
             backoffMs = RELAY_INITIAL_BACKOFF_MS
@@ -161,8 +168,9 @@ internal class RelayClient(
     }
 
     private fun ensureWorkerLocked() {
-        if (worker?.isAlive == true) return
+        if (worker?.isAlive == true && workerGeneration == generation) return
         val expected = generation
+        workerGeneration = expected
         worker = Thread({ runLoop(expected) }, "relay-client").also {
             it.isDaemon = true
             it.start()

@@ -672,45 +672,158 @@ export default {
             },
           }),
         );
-      const isRpcNotification =
-        request.method === "POST" &&
-        isNotificationOnly(await request.clone().json().catch(() => null));
-      const headers = new Headers(request.headers);
-      headers.delete("authorization");
-      headers.set("x-droidbridge-account-id", account.id);
-      headers.set("x-droidbridge-clerk-user-id", account.clerk_user_id);
-      const response = await env.DEVICES.get(env.DEVICES.idFromName(account.clerk_user_id)).fetch(
-        new Request(request, { headers }),
-      );
-      if (isRpcNotification && (response.ok || response.status === 202))
-        return cors(
-          request,
-          new Response(null, { status: 202, headers: copyProtocolHeaders(response.headers) }),
-        );
-      const wantsSse =
-        request.method === "POST" &&
-        (request.headers.get("Accept") ?? "").includes("text/event-stream") &&
-        !(request.headers.get("Accept") ?? "").startsWith("application/json");
-      if (
-        wantsSse &&
-        response.ok &&
-        response.headers.get("content-type")?.includes("application/json")
-      ) {
-        const payload = await response.text();
-        return cors(
-          request,
-          new Response(`event: message\ndata: ${payload}\n\n`, {
-            status: response.status,
-            headers: copyProtocolHeaders(response.headers, "text/event-stream"),
-          }),
-        );
-      }
-      return cors(request, response);
-    }
-    return json({ error: "not_found" }, 404);
+      return cors(request, await handleMcp(request, env, account));
+    }    return json({ error: "not_found" }, 404);
   },
 };
 
+// ---- Relay-side MCP handling -------------------------------------------------
+// The relay answers the MCP handshake and tool discovery itself so ChatGPT can
+// connect even while the phone is offline. Only tools/call goes to the phone.
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const PHONE_PROTOCOL_VERSION = "2026-07-28";
+const PHONE_META_KEY = "io.modelcontextprotocol/protocolVersion";
+const SERVER_INFO = { name: "DroidBridge", version: "relay" };
+
+const toolDef = (name: string, description: string, readOnly: boolean) => ({
+  name,
+  description,
+  inputSchema: { type: "object", additionalProperties: true },
+  annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false },
+});
+// Mirrors voice_tool_definitions() in rust/crates/runtime/src/voice_mcp.rs.
+export const VOICE_TOOLS = [
+  toolDef("screen", "Read the current screen as a compact node tree. The reply is the new screen.", true),
+  toolDef("tap", "Tap a node or visible text, then return the new screen.", false),
+  toolDef("long_press", "Long-press a node or visible text, then return the new screen.", false),
+  toolDef("swipe", "Swipe on the screen, then return the new screen.", false),
+  toolDef("type", "Type Unicode text into a focused or named field, then return the new screen.", false),
+  toolDef("open_app", "Launch an app by package name, then return the new screen.", false),
+  toolDef("navigate", "Press Back, Home, or Recents, then return the new screen.", false),
+  toolDef("screenshot", "Capture screen pixels when the model needs to see them. The reply is the new screen.", true),
+];
+const VOICE_TOOL_NAMES = new Set(VOICE_TOOLS.map((tool) => tool.name));
+
+type Rpc = { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
+const rpcOk = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id: id ?? null, result });
+const toolError = (id: unknown, text: string) =>
+  rpcOk(id, { content: [{ type: "text", text }], isError: true });
+
+async function handleOne(
+  msg: Rpc,
+  env: Env,
+  account: { id: string; clerk_user_id: string },
+  ctx: { sessionId?: string; protocolVersion?: string },
+): Promise<unknown | null> {
+  const isRequest = msg && typeof msg === "object" && "id" in msg && msg.id !== undefined;
+  const method = typeof msg?.method === "string" ? msg.method : "";
+  if (!isRequest) return null; // notifications (incl. notifications/initialized) -> 202
+  const id = msg.id;
+  const params = (msg.params && typeof msg.params === "object" ? msg.params : {}) as Record<string, unknown>;
+  switch (method) {
+    case "initialize": {
+      const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
+      const version = SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+        ? requested
+        : SUPPORTED_PROTOCOL_VERSIONS[0];
+      ctx.protocolVersion = version;
+      ctx.sessionId = crypto.randomUUID();
+      return rpcOk(id, {
+        protocolVersion: version,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: SERVER_INFO,
+        instructions:
+          "Controls the user's Android phone. Each action tool returns the new screen.",
+      });
+    }
+    case "ping":
+      return rpcOk(id, {});
+    case "tools/list":
+      return rpcOk(id, { tools: VOICE_TOOLS });
+    case "tools/call": {
+      const name = typeof params.name === "string" ? params.name : "";
+      if (!VOICE_TOOL_NAMES.has(name))
+        return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } };
+      const forwardBody = {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: {
+          name,
+          arguments: params.arguments ?? {},
+          _meta: { [PHONE_META_KEY]: PHONE_PROTOCOL_VERSION },
+        },
+      };
+      const response = await env.DEVICES.get(env.DEVICES.idFromName(account.clerk_user_id)).fetch(
+        new Request("https://device.internal/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-droidbridge-account-id": account.id,
+            "x-droidbridge-clerk-user-id": account.clerk_user_id,
+            "mcp-protocol-version": PHONE_PROTOCOL_VERSION,
+            "mcp-method": "tools/call",
+            "mcp-name": name,
+          },
+          body: JSON.stringify(forwardBody),
+        }),
+      );
+      const text = await response.text();
+      let parsed: any = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = null;
+      }
+      const code = parsed?.error?.code;
+      if (code === -32002 || response.status === 503)
+        return toolError(id, "DroidBridge phone is offline. Open DroidBridge on the phone and check that the relay shows Connected.");
+      if (code === -32001 || response.status === 504)
+        return toolError(id, "DroidBridge phone did not respond in time. Try again.");
+      if (parsed && typeof parsed === "object" && ("result" in parsed || "error" in parsed)) {
+        if (parsed.result && typeof parsed.result === "object") delete parsed.result.resultType;
+        if (parsed.error) return toolError(id, `DroidBridge error: ${parsed.error.message ?? "unknown"}`);
+        return { jsonrpc: "2.0", id, result: parsed.result };
+      }
+      return toolError(id, `DroidBridge phone returned HTTP ${response.status}.`);
+    }
+    default:
+      return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } };
+  }
+}
+
+async function handleMcp(
+  request: Request,
+  env: Env,
+  account: { id: string; clerk_user_id: string },
+): Promise<Response> {
+  if (request.method === "GET")
+    return new Response(null, { status: 405, headers: { allow: "POST, DELETE" } });
+  if (request.method === "DELETE") return new Response(null, { status: 204 });
+  const decoded = (await request.json().catch(() => undefined)) as Rpc | Rpc[] | undefined;
+  if (decoded === undefined || decoded === null || typeof decoded !== "object")
+    return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
+  const ctx: { sessionId?: string; protocolVersion?: string } = {};
+  const batch = Array.isArray(decoded);
+  const items = batch ? (decoded as Rpc[]) : [decoded as Rpc];
+  const results = (await Promise.all(items.map((item) => handleOne(item, env, account, ctx)))).filter(
+    (item) => item !== null,
+  );
+  const headers = new Headers({ "cache-control": "no-store" });
+  const sessionId = ctx.sessionId ?? request.headers.get("mcp-session-id");
+  if (sessionId) headers.set("Mcp-Session-Id", sessionId);
+  const version = ctx.protocolVersion ?? request.headers.get("mcp-protocol-version");
+  if (version) headers.set("MCP-Protocol-Version", version);
+  if (results.length === 0) return new Response(null, { status: 202, headers });
+  const payload = JSON.stringify(batch ? results : results[0]);
+  const accept = request.headers.get("Accept") ?? "";
+  if (accept.includes("text/event-stream") && !accept.startsWith("application/json")) {
+    headers.set("content-type", "text/event-stream");
+    return new Response(`event: message\ndata: ${payload}\n\n`, { status: 200, headers });
+  }
+  headers.set("content-type", "application/json");
+  return new Response(payload, { status: 200, headers });
+}
 interface RelaySocketWithAttachment extends WebSocket {
   serializeAttachment(value: unknown): void;
   deserializeAttachment(): unknown;
@@ -787,6 +900,10 @@ export class DeviceRelay {
     const protocolVersion = request.headers.get("mcp-protocol-version");
     if (sessionId) headers["mcp-session-id"] = sessionId;
     if (protocolVersion) headers["mcp-protocol-version"] = protocolVersion;
+    for (const extra of ["mcp-method", "mcp-name"]) {
+      const value = request.headers.get(extra);
+      if (value) headers[extra] = value;
+    }
     const frame = {
       type: "rpc",
       id,
