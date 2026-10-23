@@ -142,6 +142,8 @@ import com.droidbridge.ui.settings.DataRoute
 import com.droidbridge.ui.settings.DataViewModel
 import com.droidbridge.ui.settings.LicensesRoute
 import com.droidbridge.ui.settings.SettingsDestination
+import com.droidbridge.ui.settings.AuditRoute
+import com.droidbridge.ui.settings.AuditViewModel
 import com.droidbridge.ui.settings.SettingsRoute
 import com.droidbridge.standalone.ui.state.AppUiState
 import com.droidbridge.standalone.ui.state.AppViewModel
@@ -173,6 +175,7 @@ import kotlinx.serialization.Serializable
 @Serializable data object About : NavKey
 @Serializable data object Licenses : NavKey
 @Serializable data object MaintenanceRecovery : NavKey
+@Serializable data object AuditLog : NavKey
 
 private data class PrimaryDestination(
     val key: NavKey,
@@ -432,6 +435,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                                     SettingsDestination.Data -> Data
                                     SettingsDestination.About -> About
                                     SettingsDestination.Welcome -> Welcome
+                                    SettingsDestination.AuditLog -> AuditLog
                                 },
                             )
                         }
@@ -481,7 +485,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                 AgentConnectionRoute(
                     viewModel = viewModel { McpViewModel(graph.client) },
                     openMcp = { backStack.add(MCP) },
-                    openTunnel = { backStack.add(MCP) },
+                    openTunnel = { backStack.add(TunnelSetup) },
                 ) { backStack.removeLastOrNull() }
             }
             entry<MCP> {
@@ -530,6 +534,10 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                     repositoryUrl = ProductInfo.repositoryUrl(BuildConfig.GITHUB_OWNER, BuildConfig.GITHUB_REPO),
                     openLicenses = { backStack.add(Licenses) },
                 ) { backStack.removeLastOrNull() }
+            }
+            entry<AuditLog> {
+                val auditViewModel = viewModel { AuditViewModel(graph.client) }
+                AuditRoute(auditViewModel) { backStack.removeLastOrNull() }
             }
             entry<Licenses> {
                 LicensesRoute(graph.licenses, notices = { graph.thirdPartyNotices }) { backStack.removeLastOrNull() }

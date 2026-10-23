@@ -31,4 +31,6 @@ interface IDroidBridgeRuntime {
     boolean setKeepAliveEnabled(boolean enabled);
     boolean getVoiceKilled();
     boolean setVoiceKilled(boolean killed);
+    List<String> getVoiceAuditRows();
+    void clearVoiceAuditLog();
 }

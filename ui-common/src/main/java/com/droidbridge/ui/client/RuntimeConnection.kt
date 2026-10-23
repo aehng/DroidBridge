@@ -36,6 +36,10 @@ interface RuntimeConnection {
 
     suspend fun clearTunnel(): String
 
+    suspend fun getVoiceAuditRows(): List<String> = emptyList()
+
+    suspend fun clearVoiceAuditLog(): Unit = Unit
+
     /** The S-UI-017 `{schema_version,blocker,cleanup}` reply or `{error}`. */
     suspend fun maintenanceState(): String
 

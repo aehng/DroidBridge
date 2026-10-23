@@ -6,8 +6,8 @@
     <string name="action_continue">Continue</string>
     <string name="action_download_update">Download update</string>
     <string name="action_not_yet">Not yet</string>
-    <string name="agent_chatgpt">ChatGPT (official)</string>
-    <string name="agent_chatgpt_body">Connect ChatGPT on the web through the official OpenAI secure tunnel.</string>
+    <string name="agent_chatgpt">ChatGPT (voice / plugins)</string>
+    <string name="agent_chatgpt_body">Connect ChatGPT through a Cloudflare tunnel using Voice MCP.</string>
     <string name="agent_local_mcp">Local MCP</string>
     <string name="agent_local_mcp_body">AI apps on this phone, or on a computer connected to it, use the local MCP endpoint.</string>
     <string name="agent_other">Other agents</string>

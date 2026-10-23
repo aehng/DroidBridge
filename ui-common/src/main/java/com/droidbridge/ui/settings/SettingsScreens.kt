@@ -97,7 +97,7 @@ private fun openLink(context: android.content.Context, url: String) {
 /** Where people can support the project; one page for both editions. */
 private const val SUPPORT_URL = "https://ko-fi.com/zephyr7030"
 
-enum class SettingsDestination { Capabilities, AgentConnections, Diagnostics, Updates, Data, About, Welcome }
+enum class SettingsDestination { Capabilities, AgentConnections, Diagnostics, Updates, Data, About, Welcome, AuditLog }
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -155,6 +155,13 @@ fun SettingsRoute(
                         if (status.newerVersionAvailable != null) R.string.settings_data_summary else R.string.settings_data_summary_runtime,
                     ),
                 ) { open(SettingsDestination.Data) }
+                RowDivider()
+                Link(
+                    R.string.audit_title,
+                    R.drawable.ic_verified_user,
+                    "settings:audit",
+                    stringResource(R.string.audit_summary),
+                ) { open(SettingsDestination.AuditLog) }
             }
             group(R.string.settings_group_appearance) {
                 LanguageItem()

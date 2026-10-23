@@ -6,8 +6,8 @@
     <string name="action_continue">继续</string>
     <string name="action_download_update">下载更新</string>
     <string name="action_not_yet">还没有</string>
-    <string name="agent_chatgpt">ChatGPT 官方</string>
-    <string name="agent_chatgpt_body">通过 OpenAI 官方安全隧道连接网页版 ChatGPT。</string>
+    <string name="agent_chatgpt">ChatGPT（语音 / 插件）</string>
+    <string name="agent_chatgpt_body">通过 Cloudflare 隧道使用语音 MCP 连接 ChatGPT。</string>
     <string name="agent_local_mcp">本地 MCP</string>
     <string name="agent_local_mcp_body">本机或连接到手机的电脑上的 AI 应用，通过本机 MCP 地址调用。</string>
     <string name="agent_other">其他智能体</string>

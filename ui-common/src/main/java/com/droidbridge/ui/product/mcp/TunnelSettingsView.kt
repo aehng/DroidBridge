@@ -15,13 +15,21 @@ data class TunnelSettingsView(
     val configured: Boolean,
     val enabled: Boolean,
     val state: TunnelRuntimeState,
-    val tunnelId: String?,
-    val reason: String?,
-    val lastCallEpochMs: Long?,
+    val tunnelId: String? = null,
+    val reason: String? = null,
+    val lastCallEpochMs: Long? = null,
     /** The control plane's last failure token while the tunnel is not running, e.g. `http_401`. */
     val lastError: String? = null,
+    val mode: String = "quick",
+    val url: String? = null,
     val protocolVersion: String,
-)
+) {
+    fun connectorUrl(secret: String?): String? {
+        val base = url?.trimEnd('/') ?: return null
+        val token = secret?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return "$base/mcp/$token"
+    }
+}
 
 const val OPENAI_TUNNELS_URL = "https://platform.openai.com/settings/organization/tunnels"
 const val OPENAI_API_KEYS_URL = "https://platform.openai.com/api-keys"
@@ -45,6 +53,7 @@ fun isTunnelConfigurationInputValid(tunnelId: String, apiKey: String): Boolean =
 object TunnelSettingsReplies {
     fun settings(reply: String): TunnelSettingsView? = runCatching {
         val value = Json.parseToJsonElement(reply).jsonObject
+        require(!value.containsKey("api_key") && !value.containsKey("secret") && !value.containsKey("token"))
         val state = when (value.string("state")) {
             "stopped" -> TunnelRuntimeState.Stopped
             "connecting" -> TunnelRuntimeState.Connecting
@@ -57,25 +66,34 @@ object TunnelSettingsReplies {
         val reason = value.optionalString("reason")
         val lastCallEpochMs = value.optionalLong("last_call_epoch_ms")
         val lastError = value.optionalString("last_error")
+        val mode = value.optionalString("mode") ?: "quick"
+        val url = value.optionalString("url")
+        val tunnelId = value.optionalString("tunnel_id")
+
         val expected = buildSet {
             addAll(setOf("schema_version", "configured", "enabled", "state", "protocol_version"))
-            if (configured) add("tunnel_id")
+            if (tunnelId != null) add("tunnel_id")
             if (reason != null) add("reason")
             if (lastCallEpochMs != null) add("last_call_epoch_ms")
             if (lastError != null) add("last_error")
+            if (value.containsKey("mode")) add("mode")
+            if (value.containsKey("url")) add("url")
         }
         require(value.keys == expected && value.version())
         require(configured || (!enabled && state == TunnelRuntimeState.Stopped))
         require(enabled || state == TunnelRuntimeState.Stopped)
-        require((state == TunnelRuntimeState.Failed) == (reason != null))
+        require((state == TunnelRuntimeState.Failed) == (reason != null || lastError != null))
+
         TunnelSettingsView(
             configured = configured,
             enabled = enabled,
             state = state,
-            tunnelId = if (configured) value.string("tunnel_id") else null,
+            tunnelId = tunnelId,
             reason = reason,
             lastCallEpochMs = lastCallEpochMs,
             lastError = lastError,
+            mode = mode,
+            url = url,
             protocolVersion = value.string("protocol_version"),
         )
     }.getOrNull()

@@ -20,3 +20,5 @@ Builds: cargo test runtime+domain green; gradle testDebugUnitTest + assembleDebu
 
 - P1-12: acceptance verified (README fork section 83bde35 + cloudflared notice ce1dee4; LICENSE unchanged). Done.
 - P1-07+P1-09: Gemini delegation del_12e97212 in progress (do not duplicate).
+
+- P1-07 connection UI + P1-09 AuditLog.kt (500-row JSONL, owner-only) + audit screen: done (Gemini 3.8 Flash high). Full cargo test + gradle unit tests + assembleDebug green.

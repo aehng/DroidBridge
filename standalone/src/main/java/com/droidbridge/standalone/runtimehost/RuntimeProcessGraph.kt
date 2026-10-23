@@ -36,6 +36,7 @@ internal class RuntimeProcessGraph(application: Application) {
     val mcpSettings: McpSettingsController
     val tunnelSettings: TunnelSettingsController
     val cloudflared: CloudflaredSupervisor
+    val auditLog: AuditLog
     val mcpPort: Int
     val keepAliveSettings: KeepAliveSettings
     val androidExecutionRegistry: AndroidExecutionRegistry
@@ -69,6 +70,8 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidMcpSettingsFileSystem(),
         )
         keepAliveSettings = KeepAliveSettings(settingsDirectory)
+        auditLog = AuditLog(application)
+        McpHostBridge.auditSink = auditLog
         cloudflared = CloudflaredSupervisor(
             binary = File(application.applicationInfo.nativeLibraryDir, "libcloudflared.so"),
             listenerPort = mcpPort,

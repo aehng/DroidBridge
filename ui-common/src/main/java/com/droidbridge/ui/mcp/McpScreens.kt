@@ -7,7 +7,10 @@ import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -313,6 +316,45 @@ fun McpRoute(
                         TextButton(onClick = { confirmRotate = true }, modifier = Modifier.testTag("mcp:rotate")) {
                             Text(stringResource(R.string.action_rotate))
                         }
+                    }
+                }
+                state.tunnelSettings?.connectorUrl(state.revealedToken)?.let { connectorUrl ->
+                    item {
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.tunnel_connector_url)) },
+                            leadingContent = { RowIcon(R.drawable.ic_link) },
+                            supportingContent = { Text(connectorUrl) },
+                            trailingContent = {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        val copied = runCatching {
+                                            context.getSystemService(ClipboardManager::class.java)
+                                                .setPrimaryClip(ClipData.newPlainText(copiedText, connectorUrl))
+                                        }.isSuccess
+                                        if (copied) snackbars.showSnackbar(copiedText)
+                                    }
+                                }) {
+                                    Icon(painterResource(R.drawable.ic_content_copy), stringResource(R.string.tunnel_copy_connector_url))
+                                }
+                            },
+                        )
+                    }
+                }
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            stringResource(R.string.tunnel_operator_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            stringResource(R.string.tunnel_operator_curl_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

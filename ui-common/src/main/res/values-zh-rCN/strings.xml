@@ -392,4 +392,30 @@
     <string name="nav_home">首页</string>
     <string name="settings_data_summary_runtime">凭据与运行数据</string>
     <string name="shizuku_state_compat_required">需要配置 Compat Hub</string>
+    <string name="audit_title">语音审计日志</string>
+    <string name="audit_summary">最近的语音 MCP 操作与安全事件</string>
+    <string name="audit_clear">清除审计日志</string>
+    <string name="audit_clear_confirm_title">清除审计日志？</string>
+    <string name="audit_clear_confirm_body">这将永久删除此设备上的所有最近语音 MCP 调用记录。</string>
+    <string name="audit_empty_title">暂无审计记录</string>
+    <string name="audit_empty_body">来自 ChatGPT 或本地客户端的语音 MCP 调用将记录在此处。</string>
+
+    <string name="tunnel_mode">隧道模式</string>
+    <string name="tunnel_mode_quick">快捷隧道 (trycloudflare.com)</string>
+    <string name="tunnel_mode_named">命名隧道</string>
+    <string name="tunnel_status">状态</string>
+    <string name="tunnel_state_running">已连接并提供服务</string>
+    <string name="tunnel_base_url">公网基础 URL</string>
+    <string name="tunnel_connector_url">ChatGPT 连接器 URL</string>
+    <string name="tunnel_copy_base_url">复制公网基础 URL</string>
+    <string name="tunnel_copy_connector_url">复制连接器 URL</string>
+    <string name="tunnel_rotate_title">重新生成密钥？</string>
+    <string name="tunnel_rotate_warning">重新生成密钥将使现有的连接器 URL 失效。您需要在 ChatGPT 中更新自定义 MCP 服务器 URL。</string>
+    <string name="tunnel_quick_warning">快捷隧道 URL 是临时的，在隧道重启时会更改。如果地址变更，请在 ChatGPT 中更新连接器 URL。</string>
+    <string name="tunnel_checklist_title">ChatGPT 设置核对清单</string>
+    <string name="tunnel_checklist_step1">1. 在 ChatGPT 中，进入“插件”->“添加自定义 MCP 服务器”。</string>
+    <string name="tunnel_checklist_step2">2. 粘贴上方的连接器 URL。</string>
+    <string name="tunnel_checklist_step3">3. 在身份验证方式中，选择“无身份验证”(No authentication)。</string>
+    <string name="tunnel_operator_title">操作员测试</string>
+    <string name="tunnel_operator_curl_note">用于操作员 curl 测试时，请传递 Bearer 头：\ncurl -H \'Authorization: Bearer &lt;secret&gt;\' &lt;connector_url&gt;</string>
 </resources>

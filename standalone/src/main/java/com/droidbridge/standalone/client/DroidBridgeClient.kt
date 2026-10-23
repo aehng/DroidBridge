@@ -164,6 +164,10 @@ class DroidBridgeClient(
 
     override suspend fun clearTunnel(): String = mcpCall(IDroidBridgeRuntime::clearTunnel)
 
+    override suspend fun getVoiceAuditRows(): List<String> = runtimeCall { it.voiceAuditRows ?: emptyList() }
+
+    override suspend fun clearVoiceAuditLog(): Unit = runtimeCall { it.clearVoiceAuditLog() }
+
     /** The S-UI-017 `{schema_version,blocker,cleanup}` reply or `{error}`. */
     override suspend fun maintenanceState(): String = mcpCall(IDroidBridgeRuntime::getMaintenanceState)
 

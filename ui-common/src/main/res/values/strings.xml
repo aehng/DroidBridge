@@ -395,4 +395,30 @@
     <string name="nav_home">Home</string>
     <string name="settings_data_summary_runtime">Credentials and Runtime data</string>
     <string name="shizuku_state_compat_required">Compat Hub setup required</string>
+    <string name="audit_title">Voice audit log</string>
+    <string name="audit_summary">Recent voice MCP actions and security events</string>
+    <string name="audit_clear">Clear audit log</string>
+    <string name="audit_clear_confirm_title">Clear audit log?</string>
+    <string name="audit_clear_confirm_body">This permanently removes all recent voice MCP invocation records from this device.</string>
+    <string name="audit_empty_title">No audit records</string>
+    <string name="audit_empty_body">Voice MCP invocations from ChatGPT or local clients will be recorded here.</string>
+
+    <string name="tunnel_mode">Tunnel mode</string>
+    <string name="tunnel_mode_quick">Quick tunnel (trycloudflare.com)</string>
+    <string name="tunnel_mode_named">Named tunnel</string>
+    <string name="tunnel_status">Status</string>
+    <string name="tunnel_state_running">Connected &amp; serving</string>
+    <string name="tunnel_base_url">Public base URL</string>
+    <string name="tunnel_connector_url">ChatGPT connector URL</string>
+    <string name="tunnel_copy_base_url">Copy public base URL</string>
+    <string name="tunnel_copy_connector_url">Copy connector URL</string>
+    <string name="tunnel_rotate_title">Regenerate secret?</string>
+    <string name="tunnel_rotate_warning">Regenerating the secret will invalidate the existing connector URL. You will need to update ChatGPT\'s custom MCP server URL.</string>
+    <string name="tunnel_quick_warning">Quick tunnel URLs are temporary and change when the tunnel restarts. Update ChatGPT\'s connector URL if the address changes.</string>
+    <string name="tunnel_checklist_title">ChatGPT Setup Checklist</string>
+    <string name="tunnel_checklist_step1">1. In ChatGPT, navigate to Plugins -&gt; Add custom MCP server.</string>
+    <string name="tunnel_checklist_step2">2. Paste the Connector URL from above.</string>
+    <string name="tunnel_checklist_step3">3. Under Authentication, select \'No authentication\'.</string>
+    <string name="tunnel_operator_title">Operator Testing</string>
+    <string name="tunnel_operator_curl_note">For operator curl testing, pass the Bearer header:\ncurl -H \'Authorization: Bearer &lt;secret&gt;\' &lt;connector_url&gt;</string>
 </resources>

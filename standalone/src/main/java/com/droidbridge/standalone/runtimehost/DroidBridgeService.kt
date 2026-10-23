@@ -48,6 +48,7 @@ class DroidBridgeService : Service() {
     private lateinit var mcpSettings: McpSettingsController
     private lateinit var tunnelSettings: TunnelSettingsController
     private lateinit var cloudflared: CloudflaredSupervisor
+    private lateinit var auditLog: AuditLog
     private lateinit var keepAliveSettings: KeepAliveSettings
     @Volatile private var mcpEnabled = false
     @Volatile private var cloudflaredStatusText: String? = null
@@ -151,7 +152,22 @@ class DroidBridgeService : Service() {
 
         override fun getTunnelSettings(): String {
             verifyCaller()
-            return this@DroidBridgeService.tunnelSettings.settings()
+            val snap = cloudflared.snapshot.value
+            return JSONObject().apply {
+                put("schema_version", 1)
+                put("configured", snap.state != CloudflaredRunState.Stopped || snap.url != null)
+                put("enabled", snap.state != CloudflaredRunState.Stopped)
+                put("mode", snap.mode.name.lowercase())
+                snap.url?.let { put("url", it) }
+                put("state", when (snap.state) {
+                    CloudflaredRunState.Stopped -> "stopped"
+                    CloudflaredRunState.Connecting -> "connecting"
+                    CloudflaredRunState.Running -> "running"
+                    CloudflaredRunState.Failed -> "failed"
+                })
+                snap.lastError?.let { put("last_error", it) }
+                put("protocol_version", "2026-07-28")
+            }.toString()
         }
 
         override fun configureTunnel(tunnelId: String?, apiKey: String?): String {
@@ -165,12 +181,32 @@ class DroidBridgeService : Service() {
 
         override fun setTunnelEnabled(enabled: Boolean): String {
             verifyCaller()
-            return this@DroidBridgeService.tunnelSettings.setEnabled(enabled, ::setTunnelForeground)
+            if (enabled) {
+                if (VoiceKillSwitch.armed.get()) clearKillSwitch()
+                cloudflared.startQuick()
+                setCloudflaredForeground(true)
+            } else {
+                cloudflared.stop()
+                setCloudflaredForeground(false)
+            }
+            return getTunnelSettings()
         }
 
         override fun clearTunnel(): String {
             verifyCaller()
-            return this@DroidBridgeService.tunnelSettings.clear(::setTunnelForeground)
+            cloudflared.stop()
+            setCloudflaredForeground(false)
+            return getTunnelSettings()
+        }
+
+        override fun getVoiceAuditRows(): List<String> {
+            verifyCaller()
+            return auditLog.entries()
+        }
+
+        override fun clearVoiceAuditLog() {
+            verifyCaller()
+            auditLog.clear()
         }
 
         override fun getMaintenanceState(): String {
@@ -251,6 +287,7 @@ class DroidBridgeService : Service() {
         mcpSettings = graph.mcpSettings
         tunnelSettings = graph.tunnelSettings
         cloudflared = graph.cloudflared
+        auditLog = graph.auditLog
         keepAliveSettings = graph.keepAliveSettings
         hostController.setHintSink(::publishHint)
         foregroundReasons = ForegroundReasonRegistry(
