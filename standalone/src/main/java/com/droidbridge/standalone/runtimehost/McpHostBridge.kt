@@ -26,9 +26,16 @@ internal class McpArtifactQueryReply(
  */
 internal object McpHostBridge {
     private val host = AtomicReference<RuntimeHostController?>(null)
+    @Volatile var auditSink: AuditSink? = null
 
     fun install(controller: RuntimeHostController) {
         host.set(controller)
+    }
+
+    /** Voice ingress callback; a separate worker owns [AuditLog] persistence. */
+    @JvmStatic
+    fun onVoiceAudit(json: String) {
+        auditSink?.append(json)
     }
 
     @JvmStatic

@@ -165,6 +165,8 @@
     <string name="mcp_access_token">Access token</string>
     <string name="mcp_chatgpt_connection">ChatGPT connection</string>
     <string name="mcp_enable">Enable</string>
+    <string name="mcp_kill_switch">Kill switch</string>
+    <string name="mcp_kill_switch_body">Stops the listener and the Cloudflare tunnel until you turn this off.</string>
     <string name="mcp_endpoint">Endpoint</string>
     <string name="mcp_protocol_version">Protocol version</string>
     <string name="mcp_runtime_state">Runtime state</string>

@@ -14,3 +14,6 @@ Worker prompts: impl_grok*.txt, logs impl_grok*.log, runner impl_run.ps1 (all gi
 
 Grok calls used: 3 (cap ~8).
 Builds: cargo test runtime+domain green; gradle testDebugUnitTest + assembleDebug green after P1-04/05.
+
+- P1-08/P1-10/P1-11 + JNI wiring (tunnel hostname, kill flag) + Rust voice audit emission: done (Grok D). Grok calls used: 4. Note: one flaky lib test failure seen once in runtime --lib, 4 reruns green.
+- Next: P1-07 (Gemini), P1-09 AuditLog.kt + audit screen (Gemini).

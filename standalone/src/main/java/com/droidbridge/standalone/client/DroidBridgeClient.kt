@@ -146,6 +146,11 @@ class DroidBridgeClient(
     /** Returns only after the listener is live or has failed (S-MCP-004). */
     override suspend fun setMcpEnabled(enabled: Boolean): String = mcpCall { it.setMcpEnabled(enabled) }
 
+    override suspend fun getVoiceKilled(): Boolean = runtimeCall(IDroidBridgeRuntime::getVoiceKilled)
+
+    override suspend fun setVoiceKilled(killed: Boolean): Boolean =
+        runtimeCall { it.setVoiceKilled(killed) }
+
     override suspend fun rotateMcpToken(): String = mcpCall(IDroidBridgeRuntime::rotateMcpToken)
 
     override suspend fun revealMcpToken(): String = mcpCall(IDroidBridgeRuntime::revealMcpToken)

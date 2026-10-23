@@ -3,7 +3,8 @@
 
 use crate::{
     MCP_BODY_LIMIT_BYTES, McpFacade, McpHost, McpRequest, VoiceConnection, VoiceHttpResponse,
-    VoiceMcp, VoiceToolExecutor, bearer_matches, path_secret_matches,
+    VoiceMcp, VoiceToolExecutor, bearer_matches, encode_voice_audit, path_secret_matches,
+    public_request_name, redact_voice_arguments, VoiceAuditEvent,
     voice_mcp::{voice_host_allowed, voice_origin_allowed},
 };
 use bytes::Bytes;
@@ -42,6 +43,7 @@ pub struct McpListenerConfig {
     pub tunnel_hostname: Option<String>,
     pub kill_flag: Arc<AtomicBool>,
     pub voice_executor: Option<Arc<dyn VoiceToolExecutor>>,
+    pub audit_sink: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Default for McpListenerConfig {
@@ -50,6 +52,7 @@ impl Default for McpListenerConfig {
             tunnel_hostname: None,
             kill_flag: Arc::new(AtomicBool::new(false)),
             voice_executor: None,
+            audit_sink: None,
         }
     }
 }
@@ -102,6 +105,7 @@ impl IngressLimits {
 pub struct McpListener {
     runtime: tokio::runtime::Runtime,
     token: Arc<RwLock<String>>,
+    tunnel_hostname: Arc<RwLock<Option<String>>>,
 }
 
 impl McpListener {
@@ -153,6 +157,7 @@ impl McpListener {
             tokio::net::TcpListener::from_std(listener).map_err(|_| listener_failed())?
         };
         let token = Arc::new(RwLock::new(token));
+        let tunnel_hostname = Arc::new(RwLock::new(config.tunnel_hostname));
         let voice_executor = config.voice_executor.unwrap_or_else(|| {
             Arc::new(crate::HostVoiceExecutor::new(facade.clone_host()))
         });
@@ -165,17 +170,29 @@ impl McpListener {
             facade: Arc::new(facade),
             token: Arc::clone(&token),
             voice,
-            tunnel_hostname: config.tunnel_hostname,
+            tunnel_hostname: Arc::clone(&tunnel_hostname),
             limits: IngressLimits::new(),
+            audit_sink: config.audit_sink,
         });
         runtime.spawn(accept_loop(listener, shared));
-        Ok(Self { runtime, token })
+        Ok(Self {
+            runtime,
+            token,
+            tunnel_hostname,
+        })
     }
 
     pub fn set_token(&self, token: String) -> Result<(), DomainError> {
         *self.token.write().map_err(|_| {
             DomainError::new(ErrorCode::InternalError, "MCP token slot is unavailable")
         })? = token;
+        Ok(())
+    }
+
+    pub fn set_tunnel_hostname(&self, hostname: Option<String>) -> Result<(), DomainError> {
+        *self.tunnel_hostname.write().map_err(|_| {
+            DomainError::new(ErrorCode::InternalError, "MCP hostname slot is unavailable")
+        })? = hostname;
         Ok(())
     }
 
@@ -193,8 +210,9 @@ struct ListenerShared<H> {
     facade: Arc<McpFacade<H>>,
     token: Arc<RwLock<String>>,
     voice: Arc<VoiceMcp>,
-    tunnel_hostname: Option<String>,
+    tunnel_hostname: Arc<RwLock<Option<String>>>,
     limits: IngressLimits,
+    audit_sink: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 async fn accept_loop<H: McpHost + 'static>(
@@ -243,6 +261,7 @@ async fn respond<H: McpHost>(
     shared: Arc<ListenerShared<H>>,
     conn: Arc<VoiceConnection>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    let started = Instant::now();
     let path = request.uri().path().to_owned();
     let http_method = request.method().clone();
     let method = http_method.as_str().to_owned();
@@ -267,11 +286,25 @@ async fn respond<H: McpHost>(
         .read()
         .map(|token| token.clone())
         .unwrap_or_default();
-    let tunnel = shared.tunnel_hostname.as_deref();
+    let tunnel = shared
+        .tunnel_hostname
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone());
+    let tunnel = tunnel.as_deref();
+    let public_voice_path = path.starts_with("/mcp/");
 
     let mcp_path = path == "/mcp" || path.starts_with("/mcp/");
     if http_method != hyper::Method::POST {
         if mcp_path {
+            if public_voice_path {
+                emit_public_audit(
+                    &shared,
+                    &[],
+                    "protocol_failure",
+                    started,
+                );
+            }
             return Ok(empty(StatusCode::METHOD_NOT_ALLOWED));
         }
         return Ok(empty(StatusCode::NOT_FOUND));
@@ -280,12 +313,22 @@ async fn respond<H: McpHost>(
     let route = classify_route(&path, &mcp_request_head, port, tunnel, &accepted);
 
     match route {
-        Route::NotFound => return Ok(empty(StatusCode::NOT_FOUND)),
-        Route::Forbidden => return Ok(empty(StatusCode::FORBIDDEN)),
+        Route::NotFound => {
+            if public_voice_path {
+                emit_public_audit(&shared, &[], "auth_failure", started);
+            }
+            return Ok(empty(StatusCode::NOT_FOUND));
+        }
+        Route::Forbidden => {
+            emit_public_audit(&shared, &[], "origin_forbidden", started);
+            return Ok(empty(StatusCode::FORBIDDEN));
+        }
         Route::Unauthorized => {
             if !take_auth_failure(&shared.limits) {
+                emit_public_audit(&shared, &[], "rate_limit", started);
                 return Ok(empty(StatusCode::TOO_MANY_REQUESTS));
             }
+            emit_public_audit(&shared, &[], "auth_failure", started);
             return Ok(empty(StatusCode::UNAUTHORIZED));
         }
         Route::Facade | Route::Voice => {}
@@ -294,7 +337,12 @@ async fn respond<H: McpHost>(
     let body =
         match tokio::time::timeout(BODY_READ_TIMEOUT, bounded_body(request.into_body())).await {
             Ok(Ok(body)) => body,
-            Ok(Err(_)) => return Ok(empty(StatusCode::BAD_REQUEST)),
+            Ok(Err(_)) => {
+                if matches!(route, Route::Voice) || public_voice_path {
+                    emit_public_audit(&shared, &[], "parse_failure", started);
+                }
+                return Ok(empty(StatusCode::BAD_REQUEST));
+            }
             Err(_) => return Ok(empty(StatusCode::REQUEST_TIMEOUT)),
         };
     let mcp_request = McpRequest {
@@ -310,13 +358,70 @@ async fn respond<H: McpHost>(
         }
         Route::Voice => {
             if !take_authenticated(&shared.limits) {
+                emit_public_audit(&shared, &mcp_request.body, "rate_limit", started);
                 return Ok(rate_limited_voice(&mcp_request));
             }
             let response = shared.voice.handle(&mcp_request, conn.as_ref()).await;
+            let outcome = voice_outcome(&mcp_request, &response);
+            emit_public_audit(&shared, &mcp_request.body, outcome, started);
             Ok(encode_voice(response))
         }
         _ => Ok(empty(StatusCode::INTERNAL_SERVER_ERROR)),
     }
+}
+
+fn emit_public_audit<H>(
+    shared: &ListenerShared<H>,
+    body: &[u8],
+    outcome: &str,
+    started: Instant,
+) {
+    let Some(sink) = &shared.audit_sink else {
+        return;
+    };
+    let (method, tool, arguments) = public_request_name(body);
+    let arguments = redact_voice_arguments(tool.as_deref(), &arguments);
+    let event = VoiceAuditEvent {
+        method,
+        tool,
+        arguments,
+        outcome: outcome.to_owned(),
+        latency_ms: started.elapsed().as_millis() as u64,
+        foreground_package: None,
+    };
+    sink(encode_voice_audit(&event));
+}
+
+fn voice_outcome(request: &McpRequest, response: &VoiceHttpResponse) -> &'static str {
+    if response.status == 429 {
+        return "rate_limit";
+    }
+    if response.status == 403 {
+        return "kill_switch";
+    }
+    if response.status == 401 {
+        return "auth_failure";
+    }
+    let parsed = request
+        .body
+        .as_slice()
+        .get(..)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+    if parsed.is_none() || response.status == 400 {
+        return "parse_failure";
+    }
+    if response.status >= 400 {
+        return "header_failure";
+    }
+    let rpc_error = response.body.as_ref().and_then(|body| {
+        serde_json::from_slice::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| value.get("error").cloned())
+    });
+    if rpc_error.is_some() {
+        return "header_failure";
+    }
+    "ok"
 }
 
 fn classify_route(

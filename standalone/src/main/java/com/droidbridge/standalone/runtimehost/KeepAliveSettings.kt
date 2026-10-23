@@ -8,6 +8,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -23,6 +24,8 @@ internal class KeepAliveSettings(directory: File) {
         val enabled: Boolean = true,
         val idleExemptionGranted: Boolean = false,
         val backgroundGranted: Boolean = false,
+        val headlessServing: Boolean = true,
+        val killed: Boolean = false,
     )
 
     private val file = File(directory, FILE_NAME)
@@ -78,24 +81,30 @@ internal class KeepAliveSettings(directory: File) {
 
     private companion object {
         const val FILE_NAME = "keepalive.json"
-        const val SCHEMA_VERSION = 1
-        val KEYS = setOf("schema_version", "enabled", "idle_exemption_granted", "background_granted")
+        const val SCHEMA_VERSION = 2
+        val KEYS_V1 = setOf("schema_version", "enabled", "idle_exemption_granted", "background_granted")
+        val KEYS_V2 = KEYS_V1 + setOf("headless_serving", "killed")
 
         fun encode(state: State): String = buildJsonObject {
             put("schema_version", SCHEMA_VERSION)
             put("enabled", state.enabled)
             put("idle_exemption_granted", state.idleExemptionGranted)
             put("background_granted", state.backgroundGranted)
+            put("headless_serving", state.headlessServing)
+            put("killed", state.killed)
         }.toString()
 
         fun decode(text: String): State {
             val value = Json.parseToJsonElement(text).jsonObject
-            require(value.keys == KEYS)
-            require(value.getValue("schema_version").jsonPrimitive.content == SCHEMA_VERSION.toString())
+            val version = value.getValue("schema_version").jsonPrimitive.content
+            require(version == "1" || version == "2")
+            if (version == "1") require(value.keys == KEYS_V1) else require(value.keys == KEYS_V2)
             return State(
                 enabled = value.getValue("enabled").jsonPrimitive.boolean,
                 idleExemptionGranted = value.getValue("idle_exemption_granted").jsonPrimitive.boolean,
                 backgroundGranted = value.getValue("background_granted").jsonPrimitive.boolean,
+                headlessServing = value["headless_serving"]?.jsonPrimitive?.booleanOrNull ?: true,
+                killed = value["killed"]?.jsonPrimitive?.booleanOrNull ?: false,
             )
         }
     }

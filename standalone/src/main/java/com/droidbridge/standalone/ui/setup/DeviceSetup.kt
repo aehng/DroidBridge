@@ -22,6 +22,11 @@ import com.droidbridge.standalone.platform.ShizukuManagers
  * opener falls back to a page that exists on every device, so a button never does nothing.
  */
 object DeviceSetup {
+    fun isSamsung(): Boolean {
+        val brand = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+        return brand.contains("samsung")
+    }
+
     fun backgroundFacts(context: Context, autostartConfirmed: Boolean, recentsLockConfirmed: Boolean) = BackgroundFacts(
         batteryUnrestricted = context.getSystemService(PowerManager::class.java)
             .isIgnoringBatteryOptimizations(context.packageName),

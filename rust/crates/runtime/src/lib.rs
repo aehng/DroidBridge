@@ -15,6 +15,7 @@ mod filesystem;
 mod ingress;
 mod mcp;
 mod mcp_listener;
+mod voice_audit;
 mod voice_mcp;
 mod network;
 mod ports;
@@ -39,6 +40,9 @@ pub use filesystem::*;
 pub use ingress::{ToolFailure, submit_public};
 pub use mcp::*;
 pub use mcp_listener::{McpListener, McpListenerConfig};
+pub use voice_audit::{
+    encode_voice_audit, public_request_name, redact_voice_arguments, VoiceAuditEvent,
+};
 pub use voice_mcp::{
     compact_voice_projection, HostVoiceExecutor, StubVoiceExecutor, VoiceConnection,
     VoiceHttpResponse, VoiceMcp, VoiceToolExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,

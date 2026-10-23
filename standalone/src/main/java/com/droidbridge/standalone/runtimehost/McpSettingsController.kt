@@ -29,7 +29,13 @@ internal interface McpListenerPort {
 
 internal class NativeMcpListener(private val productVersion: String) : McpListenerPort {
     override fun start(port: Int, token: String): Boolean =
-        NativeRuntime.nativeMcpStart(port, token, productVersion)
+        NativeRuntime.nativeMcpStart(
+            port,
+            token,
+            productVersion,
+            VoiceKillSwitch.tunnelHostname.orEmpty(),
+            VoiceKillSwitch.armed.get(),
+        )
 
     override fun setToken(token: String): Boolean = NativeRuntime.nativeMcpSetToken(token)
 
@@ -149,6 +155,10 @@ internal class McpSettingsController(
     }
 
     private fun startListener(settings: Committed, foreground: (Boolean) -> Unit) {
+        if (VoiceKillSwitch.armed.get()) {
+            listenerFailure = null
+            return
+        }
         if (listener.state() == LISTENER_RUNNING) {
             listenerFailure = null
             return

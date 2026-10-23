@@ -7,11 +7,16 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.RemoteCallbackList
+import android.os.UserManager
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.droidbridge.standalone.DroidBridgeApplication
@@ -49,6 +54,8 @@ class DroidBridgeService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeTaskCount = 0L
     @Volatile private var latestStartId = 0
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private data class PendingRequest(
         val callback: AtomicReference<IRuntimeCallback?>,
@@ -199,6 +206,17 @@ class DroidBridgeService : Service() {
             return enabled
         }
 
+        override fun getVoiceKilled(): Boolean {
+            verifyCaller()
+            return VoiceKillSwitch.armed.get()
+        }
+
+        override fun setVoiceKilled(killed: Boolean): Boolean {
+            verifyCaller()
+            if (killed) applyKillSwitch() else clearKillSwitch()
+            return VoiceKillSwitch.armed.get()
+        }
+
         override fun resetRuntimeData(): String {
             verifyCaller()
             return hostController.resetRuntimeData().also { publishHint(PROJECTION_CONTEXT) }
@@ -248,12 +266,23 @@ class DroidBridgeService : Service() {
         tunnelSettings.disablePersistedOpenAiTunnel()
         tunnelSettings.restore(::setTunnelForeground)
         cloudflared.onQuickUrlChanged = ::notifyQuickUrlChanged
-        cloudflared.startQuick()
-        setCloudflaredForeground(true)
+        val persisted = keepAliveSettings.state().getOrNull()
+        VoiceKillSwitch.armed.set(persisted?.killed == true)
+        NativeRuntime.nativeMcpSetKill(VoiceKillSwitch.armed.get())
+        if (!VoiceKillSwitch.armed.get()) {
+            restoreCloudflaredChild()
+        }
         scope.launch {
             cloudflared.snapshot.collect { snapshot ->
                 cloudflaredStatusText = cloudflaredNotificationText(snapshot)
-                setCloudflaredForeground(true)
+                snapshot.url?.let { url ->
+                    VoiceKillSwitch.tunnelHostname = android.net.Uri.parse(url).host
+                    NativeRuntime.nativeMcpSetTunnelHostname(VoiceKillSwitch.tunnelHostname.orEmpty())
+                }
+                if (!VoiceKillSwitch.armed.get() && snapshot.state != CloudflaredRunState.Stopped) {
+                    setCloudflaredForeground(true)
+                }
+                syncServingLocks()
                 mainHandler.post { foregroundReasons.refresh() }
             }
         }
@@ -283,9 +312,11 @@ class DroidBridgeService : Service() {
         mcpSettings.enabledObserver = { enabled ->
             mcpEnabled = enabled
             publishKeepAlive()
+            syncServingLocks()
         }
         hostController.setGuardScopeSink(shizukuController::onGuardScopeReplaced)
         startRuntime()
+        maybeNotifyAccessibilityDisabled()
     }
 
     /**
@@ -345,10 +376,112 @@ class DroidBridgeService : Service() {
         }
         tunnelSettings.disablePersistedOpenAiTunnel()
         tunnelSettings.restore(::setTunnelForeground)
-        // The wake follows a Runtime the system ended, so restoring returns a listener it ran;
-        // a boot still never opens one.
-        mcpSettings.restore(::setMcpForeground)
+        if (!VoiceKillSwitch.armed.get()) {
+            mcpSettings.restore(::setMcpForeground)
+            restoreCloudflaredChild()
+        }
         foregroundReasons.set(ForegroundReason.SpecialUse, false, KEEPALIVE_WAKE_OWNER)
+        syncServingLocks()
+    }
+
+    private fun headlessRestore() {
+        if (VoiceKillSwitch.armed.get()) return
+        val armed = keepAliveSettings.state().getOrNull()?.headlessServing != false
+        if (!armed) return
+        mcpSettings.restore(::setMcpForeground)
+        restoreCloudflaredChild()
+        maybeNotifyAccessibilityDisabled()
+        syncServingLocks()
+    }
+
+    private fun restoreCloudflaredChild() {
+        if (VoiceKillSwitch.armed.get()) return
+        val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false
+        cloudflared.restore(unlocked)
+        val snapshot = cloudflared.snapshot.value
+        if (snapshot.state != CloudflaredRunState.Stopped) {
+            setCloudflaredForeground(true)
+        }
+        snapshot.url?.let { url ->
+            VoiceKillSwitch.tunnelHostname = Uri.parse(url).host
+            NativeRuntime.nativeMcpSetTunnelHostname(VoiceKillSwitch.tunnelHostname.orEmpty())
+        }
+    }
+
+    private fun applyKillSwitch() {
+        VoiceKillSwitch.armed.set(true)
+        NativeRuntime.nativeMcpSetKill(true)
+        keepAliveSettings.update { it.copy(killed = true) }
+        mcpSettings.suspendListener()
+        setMcpForeground(false)
+        cloudflared.stop()
+        setCloudflaredForeground(false)
+        syncServingLocks()
+    }
+
+    private fun clearKillSwitch() {
+        VoiceKillSwitch.armed.set(false)
+        NativeRuntime.nativeMcpSetKill(false)
+        keepAliveSettings.update { it.copy(killed = false) }
+        mcpSettings.restore(::setMcpForeground)
+        restoreCloudflaredChild()
+        syncServingLocks()
+    }
+
+    private fun servingArmed(): Boolean =
+        keepAliveSettings.state().getOrNull()?.headlessServing != false && !VoiceKillSwitch.armed.get()
+
+    private fun syncServingLocks() {
+        val serving = servingArmed() && (mcpEnabled || cloudflared.snapshot.value.state != CloudflaredRunState.Stopped)
+        if (serving) acquireServingLocks() else releaseServingLocks()
+    }
+
+    private fun acquireServingLocks() {
+        if (wakeLock == null) {
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "droidbridge:voice-serve")
+                .apply { setReferenceCounted(false) }
+        }
+        if (wakeLock?.isHeld != true) wakeLock?.acquire()
+        if (wifiLock == null) {
+            wifiLock = getSystemService(WifiManager::class.java)
+                .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "droidbridge:voice-wifi") // PARTIAL_WAKE_LOCK companion; no audio focus.
+                .apply { setReferenceCounted(false) }
+        }
+        if (wifiLock?.isHeld != true) wifiLock?.acquire()
+    }
+
+    private fun releaseServingLocks() {
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+        if (wifiLock?.isHeld == true) wifiLock?.release()
+    }
+
+    private fun maybeNotifyAccessibilityDisabled() {
+        val user = getSystemService(UserManager::class.java)
+        if (user?.isUserUnlocked == false) return
+        if (AccessibilityServiceStartupFact.isEnabled(this)) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                ACCESSIBILITY_CHANNEL,
+                getString(AppR.string.notification_accessibility_disabled_title),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+        val settings = PendingIntent.getActivity(
+            this,
+            2,
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(this, ACCESSIBILITY_CHANNEL)
+            .setSmallIcon(AppR.drawable.ic_stat_droidbridge)
+            .setContentTitle(getString(AppR.string.notification_accessibility_disabled_title))
+            .setContentText(getString(AppR.string.notification_accessibility_disabled_body))
+            .setContentIntent(settings)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(ACCESSIBILITY_NOTIFICATION_ID, notification)
     }
 
     /**
@@ -448,7 +581,10 @@ class DroidBridgeService : Service() {
         latestStartId = startId
         startRuntime()
         when (intent?.action) {
+            null, ACTION_HEADLESS_RESTORE -> headlessRestore()
             ACTION_KEEPALIVE_WAKE -> keepAliveWake()
+            ACTION_KILL_SWITCH -> applyKillSwitch()
+            ACTION_CLEAR_KILL_SWITCH -> clearKillSwitch()
             ACTION_AUTOMATION_WAKE -> automationWake(
                 intent.getStringExtra(EXTRA_AUTOMATION_PHASE) ?: "automation_wake",
             )
@@ -469,7 +605,7 @@ class DroidBridgeService : Service() {
                 publishHint(PROJECTION_CONTEXT)
             }
         }
-        return if (foregroundReasons.hasPersistentReason()) {
+        return if (servingArmed() || foregroundReasons.hasPersistentReason()) {
             START_STICKY
         } else {
             stopStartedIfIdle()
@@ -485,6 +621,7 @@ class DroidBridgeService : Service() {
         mcpSettings.enabledObserver = null
         cloudflared.stop()
         setCloudflaredForeground(false)
+        releaseServingLocks()
         tunnelSettings.suspendRuntime(::setTunnelForeground)
         mediaProjection.stop()
         shizukuController.stop()
@@ -541,6 +678,9 @@ class DroidBridgeService : Service() {
         /** Sent by the Shizuku user service's keep-alive; both sides spell it identically. */
         const val ACTION_KEEPALIVE_WAKE = "com.droidbridge.standalone.action.KEEPALIVE_WAKE"
         const val ACTION_AUTOMATION_WAKE = "com.droidbridge.standalone.action.AUTOMATION_WAKE"
+        const val ACTION_KILL_SWITCH = "com.droidbridge.standalone.action.KILL_SWITCH"
+        const val ACTION_CLEAR_KILL_SWITCH = "com.droidbridge.standalone.action.CLEAR_KILL_SWITCH"
+        const val ACTION_HEADLESS_RESTORE = "com.droidbridge.standalone.action.HEADLESS_RESTORE"
         const val EXTRA_AUTOMATION_PHASE = "automation_phase"
         private const val KEEPALIVE_WAKE_OWNER = "keepalive_wake"
         private const val MCP_FOREGROUND_OWNER = "mcp"
@@ -548,6 +688,8 @@ class DroidBridgeService : Service() {
         private const val CLOUDFLARED_FOREGROUND_OWNER = "cloudflared"
         private const val CLOUDFLARED_URL_CHANNEL = "droidbridge_cloudflared_url"
         private const val CLOUDFLARED_URL_NOTIFICATION_ID = 1002
+        private const val ACCESSIBILITY_CHANNEL = "droidbridge_accessibility"
+        private const val ACCESSIBILITY_NOTIFICATION_ID = 1003
         private const val TASK_FOREGROUND_OWNER = "task"
         private const val AUTOMATION_WAKE_OWNER = "automation_wake"
         private const val EXTRA_RESULT_CODE = "result_code"
@@ -654,6 +796,19 @@ internal class ForegroundReasonRegistry(
                             0,
                             Intent(service, DroidBridgeService::class.java)
                                 .setAction(DroidBridgeService.ACTION_MEDIA_PROJECTION_STOP),
+                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                        ),
+                    )
+                }
+                if (ForegroundReason.SpecialUse in active) {
+                    addAction(
+                        0,
+                        service.getString(AppR.string.action_kill_switch),
+                        PendingIntent.getService(
+                            service,
+                            1,
+                            Intent(service, DroidBridgeService::class.java)
+                                .setAction(DroidBridgeService.ACTION_KILL_SWITCH),
                             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                         ),
                     )

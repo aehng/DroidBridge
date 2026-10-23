@@ -9,12 +9,16 @@ use jni::{
     sys::{JNI_FALSE, JNI_TRUE, jboolean, jint, jstring},
 };
 use runtime::{
-    MCP_DEBUG_PORT, MCP_STABLE_PORT, McpArtifactReply, McpFacade, McpHost, McpListener, PortFuture,
+    MCP_DEBUG_PORT, MCP_STABLE_PORT, McpArtifactReply, McpFacade, McpHost, McpListener,
+    McpListenerConfig, PortFuture,
 };
 use serde_json::Value;
 use std::{
     ptr,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::Duration,
 };
 use tokio::sync::{Semaphore, oneshot};
@@ -26,6 +30,14 @@ const MAX_HOST_CALLS: usize = 16;
 const HOST_SLOT_WAIT: Duration = Duration::from_secs(10);
 
 static LISTENER: Mutex<Option<McpListener>> = Mutex::new(None);
+static KILL_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+static TUNNEL_HOSTNAME: Mutex<Option<String>> = Mutex::new(None);
+
+fn kill_flag() -> Arc<AtomicBool> {
+    KILL_FLAG
+        .get_or_init(|| Arc::new(AtomicBool::new(false)))
+        .clone()
+}
 
 /// The Kotlin HostController, which submits to the APK Runtime.
 pub(crate) struct KotlinMcpHost {
@@ -230,6 +242,28 @@ mod bridge {
             "authoritative Runtime host is unavailable",
         )
     }
+
+    pub(super) fn on_voice_audit(json: &str) {
+        let Some(bridge) = MCP_HOST_BRIDGE.get() else {
+            return;
+        };
+        let Ok(vm) = JavaVM::singleton() else {
+            return;
+        };
+        let _ = vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+            let line = env.new_string(json)?;
+            let result = env.call_static_method(
+                &**bridge,
+                jni_str!("onVoiceAudit"),
+                jni_sig!("(Ljava/lang/String;)V"),
+                &[JValue::Object(line.as_ref())],
+            );
+            if result.is_err() {
+                env.exception_clear();
+            }
+            Ok(())
+        });
+    }
 }
 
 #[cfg(not(target_os = "android"))]
@@ -250,6 +284,12 @@ mod bridge {
             "the MCP host bridge requires Android",
         )
     }
+
+    pub(super) fn on_voice_audit(_json: &str) {}
+}
+
+fn emit_voice_audit(json: &str) {
+    bridge::on_voice_audit(json);
 }
 
 fn listener_slot() -> Result<std::sync::MutexGuard<'static, Option<McpListener>>, DomainError> {
@@ -258,17 +298,43 @@ fn listener_slot() -> Result<std::sync::MutexGuard<'static, Option<McpListener>>
         .map_err(|_| DomainError::new(ErrorCode::InternalError, "MCP listener slot is unavailable"))
 }
 
-fn start_listener(port: jint, token: String, product_version: String) -> Result<(), DomainError> {
+fn start_listener(
+    port: jint,
+    token: String,
+    product_version: String,
+    tunnel_hostname: Option<String>,
+    killed: bool,
+) -> Result<(), DomainError> {
     let port = u16::try_from(port)
         .ok()
         .filter(|port| *port == MCP_STABLE_PORT || *port == MCP_DEBUG_PORT)
         .ok_or_else(|| DomainError::invalid("MCP port is not a build endpoint"))?;
+    kill_flag().store(killed, Ordering::SeqCst);
+    if let Some(hostname) = tunnel_hostname.clone() {
+        *TUNNEL_HOSTNAME.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(hostname);
+    }
+    let hostname = tunnel_hostname.or_else(|| {
+        TUNNEL_HOSTNAME
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+    });
     let mut slot = listener_slot()?;
     if let Some(previous) = slot.take() {
         previous.stop();
     }
     let facade = kotlin_facade(port, product_version)?;
-    *slot = Some(McpListener::start(port, token, facade)?);
+    *slot = Some(McpListener::start_with_config(
+        port,
+        token,
+        facade,
+        McpListenerConfig {
+            tunnel_hostname: hostname,
+            kill_flag: kill_flag(),
+            voice_executor: None,
+            audit_sink: Some(Arc::new(|line| emit_voice_audit(&line))),
+        },
+    )?);
     Ok(())
 }
 
@@ -280,17 +346,25 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
     port: jint,
     token: JString,
     product_version: JString,
+    tunnel_hostname: JString,
+    killed: jboolean,
 ) -> jboolean {
     match env
         .with_env(|owned| -> jni::errors::Result<jboolean> {
             initialize_host_bridge(owned)?;
             let token = token.mutf8_chars(owned)?.to_str().into_owned();
             let product_version = product_version.mutf8_chars(owned)?.to_str().into_owned();
-            Ok(if start_listener(port, token, product_version).is_ok() {
-                JNI_TRUE
-            } else {
-                JNI_FALSE
-            })
+            let hostname = tunnel_hostname.mutf8_chars(owned)?.to_str().into_owned();
+            let hostname = (!hostname.is_empty()).then_some(hostname);
+            Ok(
+                if start_listener(port, token, product_version, hostname, killed != JNI_FALSE)
+                    .is_ok()
+                {
+                    JNI_TRUE
+                } else {
+                    JNI_FALSE
+                },
+            )
         })
         .into_outcome()
     {
@@ -311,6 +385,41 @@ pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime
             let token = token.mutf8_chars(owned)?.to_str().into_owned();
             let updated = listener_slot().and_then(|slot| match slot.as_ref() {
                 Some(listener) => listener.set_token(token),
+                None => Ok(()),
+            });
+            Ok(if updated.is_ok() { JNI_TRUE } else { JNI_FALSE })
+        })
+        .into_outcome()
+    {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) | Outcome::Panic(_) => JNI_FALSE,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime_nativeMcpSetKill(
+    _env: EnvUnowned,
+    _class: JClass,
+    killed: jboolean,
+) -> jboolean {
+    kill_flag().store(killed != JNI_FALSE, Ordering::SeqCst);
+    JNI_TRUE
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_droidbridge_standalone_runtimehost_NativeRuntime_nativeMcpSetTunnelHostname(
+    mut env: EnvUnowned,
+    _class: JClass,
+    hostname: JString,
+) -> jboolean {
+    match env
+        .with_env(|owned| -> jni::errors::Result<jboolean> {
+            let value = hostname.mutf8_chars(owned)?.to_str().into_owned();
+            let hostname = (!value.is_empty()).then_some(value);
+            *TUNNEL_HOSTNAME.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                hostname.clone();
+            let updated = listener_slot().and_then(|slot| match slot.as_ref() {
+                Some(listener) => listener.set_tunnel_hostname(hostname),
                 None => Ok(()),
             });
             Ok(if updated.is_ok() { JNI_TRUE } else { JNI_FALSE })

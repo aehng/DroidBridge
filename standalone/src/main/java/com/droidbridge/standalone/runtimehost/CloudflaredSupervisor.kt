@@ -7,6 +7,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 internal enum class CloudflaredMode {
     Quick,
@@ -103,11 +106,51 @@ internal class CloudflaredSupervisor(
         watchNetwork()
     }
 
+    fun restore(userUnlocked: Boolean): String {
+        val namedFile = tokenDirectory?.let { File(it, TOKEN_FILE) }
+        if (namedFile?.isFile != true) {
+            startQuick()
+            return "quick"
+        }
+        val token = decryptStoredToken()
+        if (token == null) {
+            synchronized(lock) {
+                publish(
+                    _snapshot.value.copy(
+                        mode = CloudflaredMode.Named,
+                        state = CloudflaredRunState.Failed,
+                        lastError = KEYSTORE_LOCKED,
+                    ),
+                )
+            }
+            return KEYSTORE_LOCKED
+        }
+        startNamed(token)
+        return if (userUnlocked) "started" else "started"
+    }
+
+    fun decryptStoredToken(): String? {
+        val file = tokenDirectory?.let { File(it, TOKEN_FILE) } ?: return null
+        if (!file.isFile) return null
+        val cipher = cipher ?: return null
+        return runCatching {
+            val value = Json.parseToJsonElement(file.readText()).jsonObject
+            cipher.decrypt(
+                NAMED_TOKEN_AAD,
+                EncryptedTunnelCredential(
+                    ciphertext = value.getValue("ciphertext").jsonPrimitive.content,
+                    iv = value.getValue("iv").jsonPrimitive.content,
+                ),
+            )
+        }.getOrNull()
+    }
+
     fun stop() {
         synchronized(lock) {
             wanted = false
             generation += 1
             child?.destroy()
+            runCatching { child?.destroyForcibly() }
             child = null
             worker?.interrupt()
             worker = null
@@ -285,6 +328,7 @@ internal class CloudflaredSupervisor(
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
         const val MAX_BACKOFF_MS = 60_000L
+        const val KEYSTORE_LOCKED = "keystore_locked"
         private const val NAMED_TOKEN_AAD = "cloudflare_named_token"
         private const val TOKEN_FILE = "cloudflared-token.json"
         private val TRYCLOUDFLARE =

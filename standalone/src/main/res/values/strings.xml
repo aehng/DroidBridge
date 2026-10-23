@@ -18,7 +18,12 @@
     <string name="capabilities_enter_anyway">Continue anyway</string>
     <string name="capabilities_section_access">Permissions and backends</string>
     <string name="capabilities_section_background">Background running</string>
+    <string name="action_kill_switch">Stop serving</string>
+    <string name="notification_accessibility_disabled_body">Turn on the DroidBridge accessibility service so voice tools can tap and type.</string>
+    <string name="notification_accessibility_disabled_title">Accessibility is off</string>
     <string name="notification_cloudflared_body">Cloudflare tunnel %1$s %2$s</string>
+    <string name="samsung_device_care_body">In Device care, add DroidBridge to Never sleeping apps, then lock it in Recents so Live can keep calling it.</string>
+    <string name="samsung_never_sleeping_title">Never sleeping apps</string>
     <string name="notification_quick_url_changed_body">Update the ChatGPT connector: %1$s</string>
     <string name="notification_quick_url_changed_title">Cloudflare URL changed</string>
     <string name="notification_screen_capture_body">DroidBridge can capture the screen for tools and automations.</string>

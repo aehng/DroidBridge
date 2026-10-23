@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
@@ -49,6 +51,7 @@
         <service
             android:name=".runtimehost.DroidBridgeService"
             android:exported="false"
+            android:directBootAware="true"
             android:foregroundServiceType="specialUse|mediaProjection"
             android:process=":runtime"
             android:stopWithTask="false">
@@ -83,9 +86,12 @@
         <receiver
             android:name=".runtimehost.RuntimeReconcileReceiver"
             android:exported="true"
+            android:directBootAware="true"
             android:process=":runtime">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />

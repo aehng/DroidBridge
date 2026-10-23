@@ -72,6 +72,7 @@ object BackgroundRows {
                 CapabilityRow(CapabilityRowKey.RecentsLock, CapabilityRowState.NotConfirmed, CapabilityAction.ShowRecentsLockHelp)
             },
         )
+        // Samsung Device care: Never sleeping apps plus Recents lock; the opener is vendor autostart.
     }
 
     /**

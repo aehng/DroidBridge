@@ -4,8 +4,16 @@ internal object NativeRuntime {
     external fun nativeStart(canonicalBase: String, environmentJson: String): String
     external fun nativeSubmit(envelope: ByteArray): ByteArray
     external fun nativeQueryArtifacts(query: ByteArray, descriptor: IntArray): ByteArray?
-    external fun nativeMcpStart(port: Int, token: String, productVersion: String): Boolean
+    external fun nativeMcpStart(
+        port: Int,
+        token: String,
+        productVersion: String,
+        tunnelHostname: String,
+        killed: Boolean,
+    ): Boolean
     external fun nativeMcpSetToken(token: String): Boolean
+    external fun nativeMcpSetKill(killed: Boolean): Boolean
+    external fun nativeMcpSetTunnelHostname(hostname: String): Boolean
     external fun nativeMcpStop(): Boolean
     external fun nativeMcpState(): String?
     external fun nativeTunnelStart(

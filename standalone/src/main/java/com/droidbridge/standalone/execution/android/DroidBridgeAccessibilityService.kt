@@ -197,6 +197,9 @@ private class AccessibilityVisualAdapter(
     private val onSceneStored: () -> Unit,
 ) : AndroidExecutionBridge {
     override suspend fun execute(request: AndroidExecutionRequest): AndroidExecutionResult {
+        if (AccessibilityKillGate.blocked()) {
+            throw AndroidExecutionException("KILLED")
+        }
         if (!validatesFence(request.runtimeEpoch, request.hostGeneration, request.runtimeInstanceId)) {
             throw AndroidExecutionException("STALE_AUTHORITY")
         }
@@ -563,6 +566,9 @@ private class AccessibilityVisualAdapter(
     }
 
     private suspend fun dispatchGesture(path: Path, duration: Long) {
+        if (AccessibilityKillGate.blocked()) {
+            throw AndroidExecutionException("KILLED")
+        }
         suspendCancellableCoroutine { continuation ->
             val gesture = GestureDescription.Builder()
                 .addStroke(GestureDescription.StrokeDescription(path, 0, duration))

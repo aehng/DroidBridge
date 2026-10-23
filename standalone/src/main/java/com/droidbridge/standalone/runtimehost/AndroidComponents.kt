@@ -175,19 +175,46 @@ class DroidBridgeNotificationListenerService : NotificationListenerService() {
  * Boot, package-replacement, time and timezone broadcasts only reload the owner/store and
  * reconcile the APK-hosted alarm from canonical due truth (S-LIFE-004); no tool side effect runs.
  */
+internal object HeadlessActions {
+    val HEADLESS = setOf(
+        Intent.ACTION_BOOT_COMPLETED,
+        Intent.ACTION_LOCKED_BOOT_COMPLETED,
+        Intent.ACTION_USER_UNLOCKED,
+        Intent.ACTION_MY_PACKAGE_REPLACED,
+    )
+    val AUTOMATION = setOf(
+        Intent.ACTION_BOOT_COMPLETED,
+        Intent.ACTION_MY_PACKAGE_REPLACED,
+        Intent.ACTION_TIME_CHANGED,
+        Intent.ACTION_TIMEZONE_CHANGED,
+    )
+
+    fun routes(action: String?): Pair<Boolean, Boolean> =
+        (action in HEADLESS) to (action in AUTOMATION)
+
+    fun startStickyWhenArmed(armed: Boolean, killed: Boolean): Int =
+        if (armed && !killed) android.app.Service.START_STICKY else android.app.Service.START_NOT_STICKY
+}
+
 class RuntimeReconcileReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action !in ACTIONS) return
-        deliverAutomationWake(context, goAsync(), "automation_reconcile")
-    }
-
-    private companion object {
-        val ACTIONS = setOf(
-            Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED,
-            Intent.ACTION_TIME_CHANGED,
-            Intent.ACTION_TIMEZONE_CHANGED,
-        )
+        val (headless, automation) = HeadlessActions.routes(intent.action)
+        if (!headless && !automation) return
+        val pending = goAsync()
+        if (headless) {
+            val started = runCatching {
+                context.startForegroundService(
+                    Intent(context, DroidBridgeService::class.java)
+                        .setAction(DroidBridgeService.ACTION_HEADLESS_RESTORE),
+                )
+            }
+            if (started.isFailure) NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", "headless_restore")
+        }
+        if (automation) {
+            deliverAutomationWake(context, pending, "automation_reconcile")
+        } else {
+            pending.finish()
+        }
     }
 }
 

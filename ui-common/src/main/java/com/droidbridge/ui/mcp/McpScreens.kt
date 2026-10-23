@@ -69,6 +69,7 @@ data class McpUiState(
     val failed: Boolean = false,
     /** Present only after an explicit Reveal; dropped with this route's ViewModel. */
     val revealedToken: String? = null,
+    val killed: Boolean = false,
 )
 
 class McpViewModel(private val client: RuntimeConnection) : ViewModel() {
@@ -88,6 +89,7 @@ class McpViewModel(private val client: RuntimeConnection) : ViewModel() {
         viewModelScope.launch {
             val settings = runCatching { client.mcpSettings() }.getOrNull()?.let(McpSettingsReplies::settings)
             val tunnelSettings = runCatching { client.tunnelSettings() }.getOrNull()?.let(TunnelSettingsReplies::settings)
+            val killed = runCatching { client.getVoiceKilled() }.getOrDefault(false)
             mutableState.update { current ->
                 current.copy(
                     settings = settings ?: current.settings,
@@ -95,12 +97,20 @@ class McpViewModel(private val client: RuntimeConnection) : ViewModel() {
                     tunnelFailed = tunnelSettings == null,
                     loading = false,
                     failed = settings == null,
+                    killed = killed,
                 )
             }
         }
     }
 
     fun setEnabled(enabled: Boolean) = mutate { client.setMcpEnabled(enabled) }
+
+    fun setKilled(killed: Boolean) {
+        viewModelScope.launch {
+            val next = runCatching { client.setVoiceKilled(killed) }.getOrDefault(killed)
+            mutableState.update { it.copy(killed = next) }
+        }
+    }
 
     /** A notification decision changes a grant the Runtime reports, so it is read again. */
     fun notificationsDecided() = client.recheck()
@@ -132,6 +142,7 @@ class McpViewModel(private val client: RuntimeConnection) : ViewModel() {
                     loading = false,
                     failed = settings == null,
                     revealedToken = if (remask || settings == null) null else current.revealedToken,
+                    killed = current.killed,
                 )
             }
         }
@@ -197,6 +208,21 @@ fun McpRoute(
                 }
             }
             if (settings != null) {
+                item {
+                    ListItem(
+                        headlineContent = { Text(stringResource(R.string.mcp_kill_switch)) },
+                        leadingContent = { RowIcon(R.drawable.ic_power) },
+                        supportingContent = { Text(stringResource(R.string.mcp_kill_switch_body)) },
+                        trailingContent = {
+                            Switch(
+                                checked = state.killed,
+                                enabled = !state.loading,
+                                onCheckedChange = viewModel::setKilled,
+                                modifier = Modifier.testTag("mcp:kill"),
+                            )
+                        },
+                    )
+                }
                 item {
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.mcp_enable)) },

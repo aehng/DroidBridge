@@ -20,6 +20,10 @@ interface RuntimeConnection {
     /** Returns only after the listener is live or has failed (S-MCP-004). */
     suspend fun setMcpEnabled(enabled: Boolean): String
 
+    suspend fun getVoiceKilled(): Boolean = false
+
+    suspend fun setVoiceKilled(killed: Boolean): Boolean = killed
+
     suspend fun rotateMcpToken(): String
 
     suspend fun revealMcpToken(): String

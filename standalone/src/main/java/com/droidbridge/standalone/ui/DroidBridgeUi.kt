@@ -862,8 +862,14 @@ private fun rememberCapabilityActionHandler(
         )
         SetupDialog.AutostartConfirm -> AlertDialog(
             onDismissRequest = { dialog = null },
-            title = { Text(stringResource(AppR.string.autostart_confirm_title)) },
-            text = { Text(stringResource(AppR.string.autostart_confirm_body)) },
+            title = { Text(stringResource(
+                if (DeviceSetup.isSamsung()) AppR.string.samsung_never_sleeping_title
+                else AppR.string.autostart_confirm_title,
+            )) },
+            text = { Text(stringResource(
+                if (DeviceSetup.isSamsung()) AppR.string.samsung_device_care_body
+                else AppR.string.autostart_confirm_body,
+            )) },
             confirmButton = {
                 TextButton(
                     onClick = { dialog = null; viewModel.confirmAutostart() },
@@ -875,7 +881,10 @@ private fun rememberCapabilityActionHandler(
         SetupDialog.RecentsLock -> AlertDialog(
             onDismissRequest = { dialog = null },
             title = { Text(stringResource(AppR.string.recents_lock_title)) },
-            text = { Text(stringResource(AppR.string.recents_lock_body)) },
+            text = { Text(stringResource(
+                if (DeviceSetup.isSamsung()) AppR.string.samsung_device_care_body
+                else AppR.string.recents_lock_body,
+            )) },
             confirmButton = {
                 TextButton(
                     onClick = { dialog = null; viewModel.confirmRecentsLock() },

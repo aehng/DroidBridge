@@ -162,6 +162,8 @@
     <string name="mcp_access_token">访问令牌</string>
     <string name="mcp_chatgpt_connection">ChatGPT 连接</string>
     <string name="mcp_enable">启用</string>
+    <string name="mcp_kill_switch">紧急停止</string>
+    <string name="mcp_kill_switch_body">停止监听器和 Cloudflare 隧道，直到你再次关闭此开关。</string>
     <string name="mcp_endpoint">端点</string>
     <string name="mcp_protocol_version">协议版本</string>
     <string name="mcp_runtime_state">运行状态</string>

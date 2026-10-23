@@ -99,6 +99,7 @@ fn serve(
             tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
             kill_flag: kill,
             voice_executor: Some(executor),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -763,6 +764,7 @@ fn serve_visual(host: ScriptedVisualHost) -> (u16, McpListener) {
             tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
             kill_flag: Default::default(),
             voice_executor: Some(executor),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -843,4 +845,64 @@ fn p1_04_tools_list_names_exactly_eight() {
         VOICE_TOOL_NAMES,
         ["screen", "tap", "long_press", "swipe", "type", "open_app", "navigate", "screenshot"]
     );
+}
+
+#[test]
+fn voice_audit_one_row_per_request_and_redaction() {
+    let rows = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink_rows = Arc::clone(&rows);
+    let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let facade = McpFacade::new(CannedHost, port, "0.1.0".to_owned()).unwrap();
+    let served = McpListener::serve_with_config(
+        listener,
+        TOKEN.to_owned(),
+        facade,
+        McpListenerConfig {
+            tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
+            kill_flag: Default::default(),
+            voice_executor: Some(Arc::new(StubVoiceExecutor)),
+            audit_sink: Some(Arc::new(move |line| {
+                sink_rows.lock().unwrap().push(line);
+            })),
+        },
+    )
+    .unwrap();
+    let host = format!("127.0.0.1:{port}");
+    let path = format!("/mcp/{TOKEN}");
+    let init = fixture("synthetic_p1_00_legacy_initialize.json");
+    let (_, headers, _, _) = http(port, &host, &path, &[], &init);
+    let session = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("mcp-session-id"))
+        .unwrap()
+        .1
+        .clone();
+    let tap = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "tap", "arguments": {"node_ref": "obs/1"}
+    }});
+    http(port, &host, &path, &[("Mcp-Session-Id", session.as_str())], &tap);
+
+    let wrong = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    http(port, &host, &format!("/mcp/{wrong}"), &[], &init);
+
+    let typed = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+        "name": "type", "arguments": {"text": "hunter2secret", "password": true}
+    }});
+    http(port, &host, &path, &[("Mcp-Session-Id", session.as_str())], &typed);
+
+    served.stop();
+    let recorded = rows.lock().unwrap().clone();
+    assert!(recorded.len() >= 3, "{recorded:?}");
+    let joined = recorded.join("\n");
+    assert!(!joined.contains(TOKEN));
+    assert!(!joined.contains(wrong));
+    assert!(!joined.contains("hunter2secret"));
+    let tap_rows: Vec<_> = recorded
+        .iter()
+        .filter(|line| line.contains("\"name\":\"tap\""))
+        .collect();
+    assert_eq!(tap_rows.len(), 1, "{recorded:?}");
+    assert!(recorded.iter().any(|line| line.contains("auth_failure")));
+    assert!(recorded.iter().any(|line| line.contains("password_field")));
 }

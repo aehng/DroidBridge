@@ -29,4 +29,6 @@ interface IDroidBridgeRuntime {
     String clearStrandedExecutions();
     boolean getKeepAliveEnabled();
     boolean setKeepAliveEnabled(boolean enabled);
+    boolean getVoiceKilled();
+    boolean setVoiceKilled(boolean killed);
 }
