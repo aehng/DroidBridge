@@ -18,6 +18,9 @@
     <string name="capabilities_enter_anyway">仍然进入</string>
     <string name="capabilities_section_access">权限与后端</string>
     <string name="capabilities_section_background">后台运行</string>
+    <string name="notification_cloudflared_body">Cloudflare 隧道 %1$s %2$s</string>
+    <string name="notification_quick_url_changed_body">请更新 ChatGPT 连接器：%1$s</string>
+    <string name="notification_quick_url_changed_title">Cloudflare 地址已更改</string>
     <string name="notification_screen_capture_body">DroidBridge &#x53EF;&#x4E3A;&#x5DE5;&#x5177;&#x548C;&#x81EA;&#x52A8;&#x5316;&#x6355;&#x83B7;&#x5C4F;&#x5E55;&#x3002;</string>
     <string name="notification_screen_capture_title">&#x5C4F;&#x5E55;&#x6355;&#x83B7;&#x5DF2;&#x542F;&#x7528;</string>
     <string name="notification_tasks_body">%1$d &#x4E2A;&#x4EFB;&#x52A1;&#x6B63;&#x5728;&#x8FD0;&#x884C;</string>

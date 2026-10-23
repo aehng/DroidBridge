@@ -87,6 +87,7 @@ android {
 
     sourceSets.named("main") {
         jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs").get().asFile)
+        jniLibs.srcDir(layout.buildDirectory.dir("generated/cloudflaredJniLibs").get().asFile)
         assets.srcDir(layout.buildDirectory.dir("generated/productInfoAssets").get().asFile)
     }
 }
@@ -154,7 +155,24 @@ val packageRustGuard by tasks.registering(Copy::class) {
     into(rustJniOutput)
 }
 
-tasks.named("preBuild").configure { dependsOn(packageRustGuard) }
+val cloudflaredJniOutput = layout.buildDirectory.dir("generated/cloudflaredJniLibs")
+val fetchCloudflared by tasks.registering(Exec::class) {
+    workingDir(rootProject.projectDir)
+    inputs.file(rootProject.file("tools/fetch-cloudflared.ps1"))
+    outputs.dir(cloudflaredJniOutput)
+    commandLine(
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        rootProject.file("tools/fetch-cloudflared.ps1").absolutePath,
+        "-OutDir",
+        cloudflaredJniOutput.get().asFile.absolutePath,
+    )
+}
+
+tasks.named("preBuild").configure { dependsOn(packageRustGuard, fetchCloudflared) }
 
 // Licenses and third-party notices ship from the same provenance the release checks use.
 val copyProductInfoAssets by tasks.registering(Copy::class) {

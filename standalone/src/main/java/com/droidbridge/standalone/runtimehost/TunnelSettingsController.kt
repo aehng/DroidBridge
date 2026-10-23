@@ -247,6 +247,37 @@ internal class TunnelSettingsController(
         status(null)
     }
 
+    /**
+     * Product path migration: persist `enabled: false` without decrypting the API key, then
+     * drop the Keystore entry. [restore] after this rewrite does not start the OpenAI tunnel.
+     */
+    fun disablePersistedOpenAiTunnel() {
+        synchronized(lock) {
+            generation += 1
+            network.stop()
+            watching = false
+            runtime.stop()
+            failure = null
+            if (file.exists()) {
+                val current = runCatching {
+                    check(fileSystem.isOwnerOnly(file))
+                    decode(file.readText())
+                }.getOrNull()
+                if (current != null) {
+                    if (current.enabled) {
+                        commit(current.copy(enabled = false))
+                    } else {
+                        committed = current
+                        loaded = true
+                    }
+                    runCatching { cipher.deleteKey() }
+                }
+            }
+            committed = committed?.copy(enabled = false)
+            enabledObserver?.invoke(false)
+        }
+    }
+
     fun restore(foreground: (Boolean) -> Unit) {
         synchronized(lock) {
             val current = load().getOrNull() ?: return

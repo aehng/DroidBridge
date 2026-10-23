@@ -23,6 +23,7 @@ Generated deterministically from tools/third-party-direct.tsv.
 [android] org.jetbrains.kotlinx:kotlinx-coroutines-android 1.11.0 | Apache-2.0 | https://github.com/Kotlin/kotlinx.coroutines
 [android] org.jetbrains.kotlinx:kotlinx-serialization-json 1.11.0 | Apache-2.0 | https://github.com/Kotlin/kotlinx.serialization
 [build-tool] WinFlexBison 2.5.25 | GPL-3.0-or-later (build tool; not distributed) | https://github.com/lexxmark/winflexbison/releases/tag/v2.5.25
+[native] cloudflared 2026.10.3 | Apache-2.0 | https://github.com/cloudflare/cloudflared/releases/tag/2026.10.3
 [native] libpcap 1.10.6 | BSD-3-Clause | https://www.tcpdump.org/release/libpcap-1.10.6.tar.gz
 [rust] base64 0.23.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64
 [rust] bytes 1.12.1 | MIT | https://github.com/tokio-rs/bytes

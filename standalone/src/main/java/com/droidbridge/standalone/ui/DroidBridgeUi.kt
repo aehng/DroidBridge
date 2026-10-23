@@ -446,7 +446,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                     val ready = (state.clientState as? ClientState.Available)?.snapshot?.readiness ==
                         RuntimeReadiness.Ready
                     val next = when (state.agentType.takeIf { state.onboardingCompleted != true && ready }) {
-                        AgentType.ChatGpt -> TunnelSetup
+                        AgentType.ChatGpt -> MCP
                         AgentType.LocalMcp -> MCP
                         else -> null
                     }
@@ -481,7 +481,7 @@ private fun NavigationRoot(state: AppUiState, viewModel: AppViewModel, graph: Ap
                 AgentConnectionRoute(
                     viewModel = viewModel { McpViewModel(graph.client) },
                     openMcp = { backStack.add(MCP) },
-                    openTunnel = { backStack.add(TunnelSetup) },
+                    openTunnel = { backStack.add(MCP) },
                 ) { backStack.removeLastOrNull() }
             }
             entry<MCP> {

@@ -18,6 +18,9 @@
     <string name="capabilities_enter_anyway">Continue anyway</string>
     <string name="capabilities_section_access">Permissions and backends</string>
     <string name="capabilities_section_background">Background running</string>
+    <string name="notification_cloudflared_body">Cloudflare tunnel %1$s %2$s</string>
+    <string name="notification_quick_url_changed_body">Update the ChatGPT connector: %1$s</string>
+    <string name="notification_quick_url_changed_title">Cloudflare URL changed</string>
     <string name="notification_screen_capture_body">DroidBridge can capture the screen for tools and automations.</string>
     <string name="notification_screen_capture_title">Screen capture active</string>
     <string name="notification_tasks_body">%1$d active task(s)</string>

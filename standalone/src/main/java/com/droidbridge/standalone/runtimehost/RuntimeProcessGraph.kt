@@ -35,6 +35,8 @@ internal class RuntimeProcessGraph(application: Application) {
     val hostController: RuntimeHostController
     val mcpSettings: McpSettingsController
     val tunnelSettings: TunnelSettingsController
+    val cloudflared: CloudflaredSupervisor
+    val mcpPort: Int
     val keepAliveSettings: KeepAliveSettings
     val androidExecutionRegistry: AndroidExecutionRegistry
     val visualDisplay: VisualDisplayTracker
@@ -51,7 +53,7 @@ internal class RuntimeProcessGraph(application: Application) {
         hostController = RuntimeHostController(application)
         check(networkAttachment.start()) { "Android default-network attachment failed" }
         McpHostBridge.install(hostController)
-        val mcpPort = if (application.packageName.endsWith(DEBUG_PACKAGE_SUFFIX)) MCP_DEBUG_PORT else MCP_STABLE_PORT
+        mcpPort = if (application.packageName.endsWith(DEBUG_PACKAGE_SUFFIX)) MCP_DEBUG_PORT else MCP_STABLE_PORT
         val settingsDirectory = File(application.createDeviceProtectedStorageContext().filesDir, "droidbridge")
         mcpSettings = McpSettingsController(
             settingsDirectory,
@@ -67,6 +69,15 @@ internal class RuntimeProcessGraph(application: Application) {
             AndroidMcpSettingsFileSystem(),
         )
         keepAliveSettings = KeepAliveSettings(settingsDirectory)
+        cloudflared = CloudflaredSupervisor(
+            binary = File(application.applicationInfo.nativeLibraryDir, "libcloudflared.so"),
+            listenerPort = mcpPort,
+            network = AndroidTunnelNetworkMonitor(
+                application.getSystemService(ConnectivityManager::class.java),
+            ),
+            cipher = AndroidTunnelCredentialCipher(),
+            tokenDirectory = settingsDirectory,
+        )
         visualDisplay = VisualDisplayTracker(application)
         visualEncoder = VisualImageEncoder(application)
         androidExecutionRegistry = AndroidExecutionRegistry { key, state, reason, generation, hasExecutor ->

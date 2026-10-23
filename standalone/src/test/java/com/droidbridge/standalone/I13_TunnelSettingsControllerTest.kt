@@ -132,6 +132,52 @@ class I13_TunnelSettingsControllerTest {
     }
 
     @Test
+    fun disablePersistedOpenAiTunnel_rewrites_enabled_false_and_restore_does_not_start() {
+        controller().run {
+            configure(TUNNEL_ID, API_KEY, foreground::add)
+            setEnabled(true, foreground::add)
+        }
+        network.emit(true)
+        assertEquals(1, runtime.starts)
+
+        val migratedRuntime = FakeRuntime()
+        val migratedNetwork = FakeNetwork()
+        val migrated = controller(migratedRuntime, migratedNetwork)
+        migrated.disablePersistedOpenAiTunnel()
+        assertTrue(cipher.deleted)
+        migrated.restore(foreground::add)
+        migratedNetwork.emit(true)
+        assertEquals(0, migratedRuntime.starts)
+        assertFalse(boolean(migrated.settings(), "enabled"))
+
+        migrated.restore(foreground::add)
+        migratedNetwork.emit(true)
+        assertEquals(0, migratedRuntime.starts)
+    }
+
+    @Test
+    fun disablePersistedOpenAiTunnel_keeps_enabled_false_when_keystore_delete_throws() {
+        File(directory, "tunnel.json").writeText(
+            """{"schema_version":1,"enabled":true,"tunnel_id":"$TUNNEL_ID","ciphertext":"dGVzdA","iv":"aXY"}""",
+        )
+        val throwing = object : TunnelCredentialCipher {
+            override fun encrypt(tunnelId: String, apiKey: String) = EncryptedTunnelCredential("c", "iv")
+            override fun decrypt(tunnelId: String, credential: EncryptedTunnelCredential) = API_KEY
+            override fun deleteKey() {
+                throw IllegalStateException("keystore locked")
+            }
+        }
+        val migratedRuntime = FakeRuntime()
+        val migratedNetwork = FakeNetwork()
+        val migrated = TunnelSettingsController(directory, migratedRuntime, migratedNetwork, throwing, FakeFileSystem())
+        migrated.disablePersistedOpenAiTunnel()
+        migrated.restore(foreground::add)
+        migratedNetwork.emit(true)
+        assertEquals(0, migratedRuntime.starts)
+        assertFalse(boolean(migrated.settings(), "enabled"))
+    }
+
+    @Test
     fun enabled_configuration_restores_after_process_recreation_and_clear_removes_it() {
         controller().run {
             configure(TUNNEL_ID, API_KEY, foreground::add)

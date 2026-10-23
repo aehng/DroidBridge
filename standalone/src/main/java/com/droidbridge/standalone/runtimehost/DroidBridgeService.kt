@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -41,9 +42,10 @@ class DroidBridgeService : Service() {
     private lateinit var mediaProjection: MediaProjectionVisualController
     private lateinit var mcpSettings: McpSettingsController
     private lateinit var tunnelSettings: TunnelSettingsController
+    private lateinit var cloudflared: CloudflaredSupervisor
     private lateinit var keepAliveSettings: KeepAliveSettings
-    @Volatile private var tunnelEnabled = false
     @Volatile private var mcpEnabled = false
+    @Volatile private var cloudflaredStatusText: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var activeTaskCount = 0L
     @Volatile private var latestStartId = 0
@@ -230,18 +232,31 @@ class DroidBridgeService : Service() {
         hostController = graph.hostController
         mcpSettings = graph.mcpSettings
         tunnelSettings = graph.tunnelSettings
+        cloudflared = graph.cloudflared
         keepAliveSettings = graph.keepAliveSettings
         hostController.setHintSink(::publishHint)
         foregroundReasons = ForegroundReasonRegistry(
             service = this,
             taskCount = { activeTaskCount },
             onEmpty = ::stopStartedIfIdle,
+            statusText = { cloudflaredStatusText },
         )
         graph.setTaskActivitySink(::setTaskActivity)
         graph.setNetworkDefaultForegroundSink { active ->
             foregroundReasons.set(ForegroundReason.SpecialUse, active)
         }
+        tunnelSettings.disablePersistedOpenAiTunnel()
         tunnelSettings.restore(::setTunnelForeground)
+        cloudflared.onQuickUrlChanged = ::notifyQuickUrlChanged
+        cloudflared.startQuick()
+        setCloudflaredForeground(true)
+        scope.launch {
+            cloudflared.snapshot.collect { snapshot ->
+                cloudflaredStatusText = cloudflaredNotificationText(snapshot)
+                setCloudflaredForeground(true)
+                mainHandler.post { foregroundReasons.refresh() }
+            }
+        }
         mediaProjection = MediaProjectionVisualController(
             service = this,
             registry = graph.androidExecutionRegistry,
@@ -264,10 +279,7 @@ class DroidBridgeService : Service() {
         )
         graph.setShizukuPrimitiveBridge(shizukuController.primitiveBridge())
         shizukuController.start()
-        tunnelSettings.enabledObserver = { enabled ->
-            tunnelEnabled = enabled
-            publishKeepAlive()
-        }
+        tunnelSettings.enabledObserver = { _ -> publishKeepAlive() }
         mcpSettings.enabledObserver = { enabled ->
             mcpEnabled = enabled
             publishKeepAlive()
@@ -331,6 +343,7 @@ class DroidBridgeService : Service() {
             NativeRuntime.nativeRecordHostFault("FGS_START_REJECTED", "keepalive_wake")
             return
         }
+        tunnelSettings.disablePersistedOpenAiTunnel()
         tunnelSettings.restore(::setTunnelForeground)
         // The wake follows a Runtime the system ended, so restoring returns a listener it ran;
         // a boot still never opens one.
@@ -344,12 +357,41 @@ class DroidBridgeService : Service() {
      */
     private fun publishKeepAlive() {
         val allowed = keepAliveSettings.state().getOrNull()?.enabled == true
-        shizukuController.setKeepAliveWanted(allowed && (tunnelEnabled || mcpEnabled))
+        shizukuController.setKeepAliveWanted(allowed && mcpEnabled)
     }
 
     private fun setTunnelForeground(active: Boolean) {
         if (active) startService(Intent(this, DroidBridgeService::class.java))
         foregroundReasons.set(ForegroundReason.SpecialUse, active, TUNNEL_FOREGROUND_OWNER)
+    }
+
+    private fun setCloudflaredForeground(active: Boolean) {
+        if (active) startService(Intent(this, DroidBridgeService::class.java))
+        foregroundReasons.set(ForegroundReason.SpecialUse, active, CLOUDFLARED_FOREGROUND_OWNER)
+    }
+
+    private fun cloudflaredNotificationText(snapshot: CloudflaredSnapshot): String {
+        val state = snapshot.state.name.lowercase()
+        val url = snapshot.url.orEmpty()
+        return getString(AppR.string.notification_cloudflared_body, state, url)
+    }
+
+    private fun notifyQuickUrlChanged(url: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CLOUDFLARED_URL_CHANNEL,
+                getString(AppR.string.notification_quick_url_changed_title),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+        val notification = NotificationCompat.Builder(this, CLOUDFLARED_URL_CHANNEL)
+            .setSmallIcon(AppR.drawable.ic_stat_droidbridge)
+            .setContentTitle(getString(AppR.string.notification_quick_url_changed_title))
+            .setContentText(getString(AppR.string.notification_quick_url_changed_body, url))
+            .setAutoCancel(true)
+            .build()
+        manager.notify(CLOUDFLARED_URL_NOTIFICATION_ID, notification)
     }
 
     private fun setTaskActivity(activeTasks: Long) {
@@ -441,6 +483,8 @@ class DroidBridgeService : Service() {
         mcpSettings.suspendListener()
         tunnelSettings.enabledObserver = null
         mcpSettings.enabledObserver = null
+        cloudflared.stop()
+        setCloudflaredForeground(false)
         tunnelSettings.suspendRuntime(::setTunnelForeground)
         mediaProjection.stop()
         shizukuController.stop()
@@ -501,6 +545,9 @@ class DroidBridgeService : Service() {
         private const val KEEPALIVE_WAKE_OWNER = "keepalive_wake"
         private const val MCP_FOREGROUND_OWNER = "mcp"
         private const val TUNNEL_FOREGROUND_OWNER = "tunnel"
+        private const val CLOUDFLARED_FOREGROUND_OWNER = "cloudflared"
+        private const val CLOUDFLARED_URL_CHANNEL = "droidbridge_cloudflared_url"
+        private const val CLOUDFLARED_URL_NOTIFICATION_ID = 1002
         private const val TASK_FOREGROUND_OWNER = "task"
         private const val AUTOMATION_WAKE_OWNER = "automation_wake"
         private const val EXTRA_RESULT_CODE = "result_code"
@@ -529,6 +576,7 @@ internal class ForegroundReasonRegistry(
     private val service: Service,
     private val taskCount: () -> Long = { 0 },
     private val onEmpty: () -> Unit = {},
+    private val statusText: () -> String? = { null },
 ) {
     /** Each type stays in the mask while any logical owner still needs it. */
     private val owners = linkedMapOf<ForegroundReason, MutableSet<String>>()
@@ -592,7 +640,7 @@ internal class ForegroundReasonRegistry(
                         AppR.string.notification_tasks_body,
                         taskCount(),
                     )
-                    else -> service.getString(R.string.mcp_state_running)
+                    else -> statusText() ?: service.getString(R.string.mcp_state_running)
                 },
             )
             .setOngoing(true)
@@ -618,6 +666,11 @@ internal class ForegroundReasonRegistry(
             @Suppress("DEPRECATION")
             service.startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    @Synchronized
+    fun refresh() {
+        if (active.isNotEmpty()) apply()
     }
 
     @Synchronized
