@@ -163,7 +163,7 @@
     <string name="mcp_chatgpt_connection">ChatGPT 连接</string>
     <string name="mcp_enable">启用</string>
     <string name="mcp_kill_switch">紧急停止</string>
-    <string name="mcp_kill_switch_body">停止监听器和 Cloudflare 隧道，直到你再次关闭此开关。</string>
+    <string name="mcp_kill_switch_body">停止监听器和出站中继，直到你再次关闭此开关。</string>
     <string name="mcp_endpoint">端点</string>
     <string name="mcp_protocol_version">协议版本</string>
     <string name="mcp_runtime_state">运行状态</string>
@@ -418,4 +418,24 @@
     <string name="tunnel_checklist_step3">3. 在身份验证方式中，选择“无身份验证”(No authentication)。</string>
     <string name="tunnel_operator_title">操作员测试</string>
     <string name="tunnel_operator_curl_note">用于操作员 curl 测试时，请传递 Bearer 头：\ncurl -H \'Authorization: Bearer &lt;secret&gt;\' &lt;connector_url&gt;</string>
+    <string name="relay_status">中继状态</string>
+    <string name="relay_status_unpaired">未配对</string>
+    <string name="relay_status_connecting">正在连接</string>
+    <string name="relay_status_connected">已连接</string>
+    <string name="relay_status_offline">离线</string>
+    <string name="relay_pair_title">配对此手机</string>
+    <string name="relay_pair_step1">1. 在浏览器中打开 %1$s 并登录。</string>
+    <string name="relay_pair_step2">2. 在此输入配对码。</string>
+    <string name="relay_pair_code">配对码</string>
+    <string name="relay_pair_action">配对</string>
+    <string name="relay_unpair_action">取消配对</string>
+    <string name="relay_advanced_base_toggle">高级：中继基础 URL</string>
+    <string name="relay_base_url">中继基础 URL</string>
+    <string name="relay_chatgpt_title">ChatGPT 连接器</string>
+    <string name="relay_chatgpt_step1">1. 在 chatgpt.com 打开设置 &gt; 应用与连接器 &gt; 高级，并启用开发者模式。</string>
+    <string name="relay_chatgpt_step2">2. 创建连接器。URL：%1$s</string>
+    <string name="relay_chatgpt_step3">3. 身份验证：OAuth。使用配对时的同一账户登录。</string>
+    <string name="relay_chatgpt_step4">4. 在 Android 版 ChatGPT 中开始 Live，例如说“打开设置并开启深色模式”。</string>
+    <string name="relay_quick_fallback_toggle">高级：快捷隧道回退（重启后 URL 会变）</string>
+    <string name="relay_quick_fallback_enable">启用快捷隧道回退</string>
 </resources>

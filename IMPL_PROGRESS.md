@@ -25,3 +25,9 @@ Builds: cargo test runtime+domain green; gradle testDebugUnitTest + assembleDebu
 
 - Flaky runtime lib test: 1 failure in ~13 runs (Grok D's uncommitted state), 0/12 since; not reproducible, not pursued (likely timing in tunnel/listener tests that sleep ~10s).
 - PHASE 1 (automatable scope) COMPLETE. Grok calls: 4. APK: standalone\build\outputs\apk\debug\standalone-debug.apk
+
+## Relay switch (Oct 23)
+- Grok E (relay/ Worker) and Grok F (Android RelayClient + UI) started 10:20 MDT; logs impl_grokE.log / impl_grokF.log. Grok calls: 6 total.
+
+- Relay switch done: relay/ Worker (vitest 17/17 green), Android RelayClient + pairing + ChatGPT instructions UI, Quick Tunnel hidden behind advanced toggle. Gradle unit tests + assembleDebug green. Not deployed (needs Eli approval; see relay/README.md DEPLOY).
+

@@ -36,6 +36,7 @@ internal class RuntimeProcessGraph(application: Application) {
     val mcpSettings: McpSettingsController
     val tunnelSettings: TunnelSettingsController
     val cloudflared: CloudflaredSupervisor
+    val relay: RelayClient
     val auditLog: AuditLog
     val mcpPort: Int
     val keepAliveSettings: KeepAliveSettings
@@ -80,6 +81,15 @@ internal class RuntimeProcessGraph(application: Application) {
             ),
             cipher = AndroidTunnelCredentialCipher(),
             tokenDirectory = settingsDirectory,
+        )
+        relay = RelayClient(
+            store = RelayStore(settingsDirectory, AndroidMcpSettingsFileSystem()),
+            listenerPort = mcpPort,
+            pathToken = { mcpSettings.pathToken() },
+            network = AndroidTunnelNetworkMonitor(
+                application.getSystemService(ConnectivityManager::class.java),
+            ),
+            killed = { VoiceKillSwitch.armed.get() },
         )
         visualDisplay = VisualDisplayTracker(application)
         visualEncoder = VisualImageEncoder(application)

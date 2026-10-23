@@ -33,4 +33,8 @@ interface IDroidBridgeRuntime {
     boolean setVoiceKilled(boolean killed);
     List<String> getVoiceAuditRows();
     void clearVoiceAuditLog();
+    String getRelaySettings();
+    String pairRelay(String code, String relayBase);
+    String unpairRelay();
+    String setQuickTunnelFallback(boolean enabled);
 }

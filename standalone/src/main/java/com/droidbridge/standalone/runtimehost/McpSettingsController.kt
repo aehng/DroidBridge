@@ -106,6 +106,8 @@ internal class McpSettingsController(
         load().fold(::status) { IO_ERROR }
     }
 
+    fun pathToken(): String? = synchronized(lock) { load().getOrNull()?.token }
+
     fun setEnabled(enabled: Boolean, foreground: (Boolean) -> Unit): String = synchronized(lock) {
         val current = load().getOrElse { return IO_ERROR }
         if (enabled) {

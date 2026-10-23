@@ -166,7 +166,7 @@
     <string name="mcp_chatgpt_connection">ChatGPT connection</string>
     <string name="mcp_enable">Enable</string>
     <string name="mcp_kill_switch">Kill switch</string>
-    <string name="mcp_kill_switch_body">Stops the listener and the Cloudflare tunnel until you turn this off.</string>
+    <string name="mcp_kill_switch_body">Stops the listener and the outbound relay until you turn this off.</string>
     <string name="mcp_endpoint">Endpoint</string>
     <string name="mcp_protocol_version">Protocol version</string>
     <string name="mcp_runtime_state">Runtime state</string>
@@ -421,4 +421,24 @@
     <string name="tunnel_checklist_step3">3. Under Authentication, select \'No authentication\'.</string>
     <string name="tunnel_operator_title">Operator Testing</string>
     <string name="tunnel_operator_curl_note">For operator curl testing, pass the Bearer header:\ncurl -H \'Authorization: Bearer &lt;secret&gt;\' &lt;connector_url&gt;</string>
+    <string name="relay_status">Relay status</string>
+    <string name="relay_status_unpaired">Unpaired</string>
+    <string name="relay_status_connecting">Connecting</string>
+    <string name="relay_status_connected">Connected</string>
+    <string name="relay_status_offline">Offline</string>
+    <string name="relay_pair_title">Pair this phone</string>
+    <string name="relay_pair_step1">1. Open %1$s in a browser and sign in.</string>
+    <string name="relay_pair_step2">2. Enter the pairing code here.</string>
+    <string name="relay_pair_code">Pairing code</string>
+    <string name="relay_pair_action">Pair</string>
+    <string name="relay_unpair_action">Unpair</string>
+    <string name="relay_advanced_base_toggle">Advanced: relay base URL</string>
+    <string name="relay_base_url">Relay base URL</string>
+    <string name="relay_chatgpt_title">ChatGPT connector</string>
+    <string name="relay_chatgpt_step1">1. On chatgpt.com go to Settings &gt; Apps &amp; Connectors &gt; Advanced and enable Developer mode.</string>
+    <string name="relay_chatgpt_step2">2. Create a connector. URL: %1$s</string>
+    <string name="relay_chatgpt_step3">3. Authentication: OAuth. Sign in with the same account used for pairing.</string>
+    <string name="relay_chatgpt_step4">4. In ChatGPT on Android start Live and ask e.g. \"open Settings and turn on dark mode\".</string>
+    <string name="relay_quick_fallback_toggle">Advanced: Quick Tunnel fallback (URL changes on restart)</string>
+    <string name="relay_quick_fallback_enable">Enable Quick Tunnel fallback</string>
 </resources>

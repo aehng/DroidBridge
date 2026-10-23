@@ -48,6 +48,7 @@ class DroidBridgeService : Service() {
     private lateinit var mcpSettings: McpSettingsController
     private lateinit var tunnelSettings: TunnelSettingsController
     private lateinit var cloudflared: CloudflaredSupervisor
+    private lateinit var relay: RelayClient
     private lateinit var auditLog: AuditLog
     private lateinit var keepAliveSettings: KeepAliveSettings
     @Volatile private var mcpEnabled = false
@@ -209,6 +210,38 @@ class DroidBridgeService : Service() {
             auditLog.clear()
         }
 
+        override fun getRelaySettings(): String {
+            verifyCaller()
+            return this@DroidBridgeService.relay.settingsJson()
+        }
+
+        override fun pairRelay(code: String?, relayBase: String?): String {
+            verifyCaller()
+            val deviceName = android.os.Build.MODEL ?: "Android"
+            return this@DroidBridgeService.relay.pair(
+                requireNotNull(code),
+                relayBase.orEmpty(),
+                deviceName,
+            )
+        }
+
+        override fun unpairRelay(): String {
+            verifyCaller()
+            return this@DroidBridgeService.relay.unpair()
+        }
+
+        override fun setQuickTunnelFallback(enabled: Boolean): String {
+            verifyCaller()
+            val reply = this@DroidBridgeService.relay.setQuickTunnelFallback(enabled)
+            if (enabled && !VoiceKillSwitch.armed.get()) {
+                restoreCloudflaredChild()
+            } else if (!enabled) {
+                cloudflared.stop()
+                setCloudflaredForeground(false)
+            }
+            return reply
+        }
+
         override fun getMaintenanceState(): String {
             verifyCaller()
             return hostController.maintenanceState()
@@ -287,6 +320,7 @@ class DroidBridgeService : Service() {
         mcpSettings = graph.mcpSettings
         tunnelSettings = graph.tunnelSettings
         cloudflared = graph.cloudflared
+        relay = graph.relay
         auditLog = graph.auditLog
         keepAliveSettings = graph.keepAliveSettings
         hostController.setHintSink(::publishHint)
@@ -307,7 +341,20 @@ class DroidBridgeService : Service() {
         VoiceKillSwitch.armed.set(persisted?.killed == true)
         NativeRuntime.nativeMcpSetKill(VoiceKillSwitch.armed.get())
         if (!VoiceKillSwitch.armed.get()) {
-            restoreCloudflaredChild()
+            restoreRelay()
+            if (relay.snapshot.value.quickTunnelFallback) restoreCloudflaredChild()
+        }
+        scope.launch {
+            relay.snapshot.collect { snapshot ->
+                cloudflaredStatusText = relayNotificationText(snapshot)
+                if (!VoiceKillSwitch.armed.get() && snapshot.paired) {
+                    setRelayForeground(true)
+                } else {
+                    setRelayForeground(false)
+                }
+                syncServingLocks()
+                mainHandler.post { foregroundReasons.refresh() }
+            }
         }
         scope.launch {
             cloudflared.snapshot.collect { snapshot ->
@@ -415,7 +462,8 @@ class DroidBridgeService : Service() {
         tunnelSettings.restore(::setTunnelForeground)
         if (!VoiceKillSwitch.armed.get()) {
             mcpSettings.restore(::setMcpForeground)
-            restoreCloudflaredChild()
+            restoreRelay()
+            if (relay.snapshot.value.quickTunnelFallback) restoreCloudflaredChild()
         }
         foregroundReasons.set(ForegroundReason.SpecialUse, false, KEEPALIVE_WAKE_OWNER)
         syncServingLocks()
@@ -426,9 +474,16 @@ class DroidBridgeService : Service() {
         val armed = keepAliveSettings.state().getOrNull()?.headlessServing != false
         if (!armed) return
         mcpSettings.restore(::setMcpForeground)
-        restoreCloudflaredChild()
+        restoreRelay()
+        if (relay.snapshot.value.quickTunnelFallback) restoreCloudflaredChild()
         maybeNotifyAccessibilityDisabled()
         syncServingLocks()
+    }
+
+    private fun restoreRelay() {
+        if (VoiceKillSwitch.armed.get()) return
+        relay.start()
+        if (relay.snapshot.value.paired) setRelayForeground(true)
     }
 
     private fun restoreCloudflaredChild() {
@@ -451,6 +506,8 @@ class DroidBridgeService : Service() {
         keepAliveSettings.update { it.copy(killed = true) }
         mcpSettings.suspendListener()
         setMcpForeground(false)
+        relay.stop()
+        setRelayForeground(false)
         cloudflared.stop()
         setCloudflaredForeground(false)
         syncServingLocks()
@@ -461,7 +518,8 @@ class DroidBridgeService : Service() {
         NativeRuntime.nativeMcpSetKill(false)
         keepAliveSettings.update { it.copy(killed = false) }
         mcpSettings.restore(::setMcpForeground)
-        restoreCloudflaredChild()
+        restoreRelay()
+        if (relay.snapshot.value.quickTunnelFallback) restoreCloudflaredChild()
         syncServingLocks()
     }
 
@@ -469,7 +527,11 @@ class DroidBridgeService : Service() {
         keepAliveSettings.state().getOrNull()?.headlessServing != false && !VoiceKillSwitch.armed.get()
 
     private fun syncServingLocks() {
-        val serving = servingArmed() && (mcpEnabled || cloudflared.snapshot.value.state != CloudflaredRunState.Stopped)
+        val serving = servingArmed() && (
+            mcpEnabled ||
+                relay.snapshot.value.paired ||
+                cloudflared.snapshot.value.state != CloudflaredRunState.Stopped
+            )
         if (serving) acquireServingLocks() else releaseServingLocks()
     }
 
@@ -538,6 +600,16 @@ class DroidBridgeService : Service() {
     private fun setCloudflaredForeground(active: Boolean) {
         if (active) startService(Intent(this, DroidBridgeService::class.java))
         foregroundReasons.set(ForegroundReason.SpecialUse, active, CLOUDFLARED_FOREGROUND_OWNER)
+    }
+
+    private fun setRelayForeground(active: Boolean) {
+        if (active) startService(Intent(this, DroidBridgeService::class.java))
+        foregroundReasons.set(ForegroundReason.SpecialUse, active, RELAY_FOREGROUND_OWNER)
+    }
+
+    private fun relayNotificationText(snapshot: RelaySnapshot): String {
+        val status = snapshot.status.name.lowercase()
+        return getString(AppR.string.notification_cloudflared_body, status, snapshot.relayBase)
     }
 
     private fun cloudflaredNotificationText(snapshot: CloudflaredSnapshot): String {
@@ -656,6 +728,8 @@ class DroidBridgeService : Service() {
         mcpSettings.suspendListener()
         tunnelSettings.enabledObserver = null
         mcpSettings.enabledObserver = null
+        relay.stop()
+        setRelayForeground(false)
         cloudflared.stop()
         setCloudflaredForeground(false)
         releaseServingLocks()
@@ -723,6 +797,7 @@ class DroidBridgeService : Service() {
         private const val MCP_FOREGROUND_OWNER = "mcp"
         private const val TUNNEL_FOREGROUND_OWNER = "tunnel"
         private const val CLOUDFLARED_FOREGROUND_OWNER = "cloudflared"
+        private const val RELAY_FOREGROUND_OWNER = "relay"
         private const val CLOUDFLARED_URL_CHANNEL = "droidbridge_cloudflared_url"
         private const val CLOUDFLARED_URL_NOTIFICATION_ID = 1002
         private const val ACCESSIBILITY_CHANNEL = "droidbridge_accessibility"

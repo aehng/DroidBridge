@@ -164,6 +164,16 @@ class DroidBridgeClient(
 
     override suspend fun clearTunnel(): String = mcpCall(IDroidBridgeRuntime::clearTunnel)
 
+    override suspend fun relaySettings(): String = mcpCall(IDroidBridgeRuntime::getRelaySettings)
+
+    override suspend fun pairRelay(code: String, relayBase: String): String =
+        mcpCall { it.pairRelay(code, relayBase) }
+
+    override suspend fun unpairRelay(): String = mcpCall(IDroidBridgeRuntime::unpairRelay)
+
+    override suspend fun setQuickTunnelFallback(enabled: Boolean): String =
+        mcpCall { it.setQuickTunnelFallback(enabled) }
+
     override suspend fun getVoiceAuditRows(): List<String> = runtimeCall { it.voiceAuditRows ?: emptyList() }
 
     override suspend fun clearVoiceAuditLog(): Unit = runtimeCall { it.clearVoiceAuditLog() }

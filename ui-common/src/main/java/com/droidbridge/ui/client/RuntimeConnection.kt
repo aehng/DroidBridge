@@ -36,6 +36,14 @@ interface RuntimeConnection {
 
     suspend fun clearTunnel(): String
 
+    suspend fun relaySettings(): String = """{"schema_version":1,"status":"unpaired","paired":false,"relay_base":"https://droid.synqra.info","mcp_url":"https://droid.synqra.info/mcp","quick_tunnel_fallback":false}"""
+
+    suspend fun pairRelay(code: String, relayBase: String): String = relaySettings()
+
+    suspend fun unpairRelay(): String = relaySettings()
+
+    suspend fun setQuickTunnelFallback(enabled: Boolean): String = relaySettings()
+
     suspend fun getVoiceAuditRows(): List<String> = emptyList()
 
     suspend fun clearVoiceAuditLog(): Unit = Unit
