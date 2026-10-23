@@ -118,7 +118,7 @@ impl<H: McpHost> HostVoiceExecutor<H> {
                     "input": {
                         "include_image": include_image,
                         "include_nodes": true,
-                        "max_nodes": 40
+                        "max_nodes": VOICE_OBSERVE_MAX_NODES
                     }
                 }),
             )
@@ -543,9 +543,17 @@ fn find_node_ref(observed: &Value, text: &str) -> Option<String> {
     .filter(|value| !value.is_empty())
 }
 
-/// Compact projection for the voice model: actionable or labelled nodes, cap 40.
+/// Nodes requested from the device per observation (breadth-first). 40 cut deep list rows
+/// (e.g. WhatsApp messages) before they were ever seen.
+const VOICE_OBSERVE_MAX_NODES: u32 = 2_000;
+/// Labelled/actionable nodes handed to the voice model.
+const VOICE_KEPT_MAX_NODES: usize = 300;
+
+/// Compact projection for the voice model: actionable or labelled nodes, capped.
 pub fn compact_voice_projection(observe: &Value) -> Value {
     let mut kept = Vec::new();
+    let mut truncated = observe.get("truncated").and_then(Value::as_bool).unwrap_or(false)
+        || observe.get("nodes_truncated").and_then(Value::as_bool).unwrap_or(false);
     if let Some(nodes) = observe.get("nodes").and_then(Value::as_array) {
         for node in nodes {
             if !keep_voice_node(node) {
@@ -577,7 +585,8 @@ pub fn compact_voice_projection(observe: &Value) -> Value {
                 compact.insert(flag.to_owned(), json!(value));
             }
             kept.push(Value::Object(compact));
-            if kept.len() == 40 {
+            if kept.len() == VOICE_KEPT_MAX_NODES {
+                truncated = true;
                 break;
             }
         }
@@ -592,6 +601,7 @@ pub fn compact_voice_projection(observe: &Value) -> Value {
         "foreground_package": package,
         "summary": summary,
         "nodes": kept,
+        "truncated": truncated,
         "observation_id": observe.get("observation_id"),
         "display": observe.get("display"),
     })
