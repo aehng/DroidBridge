@@ -29,6 +29,71 @@
   <img src=".github/assets/poster-en.png" alt="DroidBridge: AI that actually uses your phone" width="800">
 </p>
 
+## Voice fork (ChatGPT Live)
+
+> **Fork attribution:** This repository is a fork of [zephyr7030/DroidBridge](https://github.com/zephyr7030/DroidBridge) v0.5.8, licensed under [Apache-2.0](LICENSE). The original `LICENSE` is unchanged; changes are on top of upstream.
+
+### Goal and architecture
+ChatGPT (including ChatGPT Live voice) calls this phone's MCP server as a custom connector. DroidBridge executes requested actions on the phone via the Android Accessibility service; Shizuku is optional.
+
+The OpenAI Platform API key and the OpenAI Secure MCP Tunnel are **not** used by this fork. Any persisted OpenAI tunnel configuration is disabled on startup.
+
+### Cloudflare setup
+Serving over the internet uses Cloudflare Tunnel:
+- **Quick Tunnel (default, free):** No Cloudflare account or domain required. Cloudflare assigns a random `trycloudflare.com` URL that changes whenever `cloudflared` restarts. When a new URL is generated, the app notifies you and you must update the connector URL on chatgpt.com.
+- **Named tunnel (free Cloudflare account + owned domain):** For a stable hostname, create a free Cloudflare account, configure a tunnel on a domain you control, and paste the tunnel token into the app.
+- **Bundled binary:** The app bundles the official `cloudflared` 2026.10.3 `linux-arm64` binary (Apache-2.0), downloaded at build time with a pinned SHA-256.
+
+### Connector setup on chatgpt.com
+Custom MCP connectors are configured in a browser on [chatgpt.com](https://chatgpt.com) (custom connectors are web-only):
+1. Navigate to **Settings** -> **Apps/Plugins** -> **Add custom MCP server**.
+2. Enter the URL: `https://<tunnel-host>/mcp/<secret>`
+3. Set **Authentication**: **No authentication**.
+4. The `<secret>` is a 43-character token shown in the app. Treat the full URL as a password and rotate it in the app if leaked.
+5. *Operator note:* For command-line testing (e.g. `curl`), `POST /mcp` with an `Authorization: Bearer <token>` header is also supported.
+
+### Ports and network binding
+- Debug build (`com.droidbridge.standalone.debug`) listens on `127.0.0.1:18765`.
+- Release build (`com.droidbridge.standalone`) listens on `127.0.0.1:8765`.
+- Listeners bind to loopback only; the Cloudflare tunnel is the only public path.
+
+### Voice tools
+The voice profile exposes:
+- `screen`: View current UI hierarchy.
+- `tap`: Tap coordinates or UI elements.
+- `long_press`: Long-press coordinates or UI elements.
+- `swipe`: Swipe gestures across screen coordinates.
+- `type`: Input text.
+- `open_app`: Launch applications.
+- `navigate`: Navigation actions (`back`, `home`, `recents`).
+- `screenshot`: Capture a screen image.
+
+Mutating tools are marked non-read-only (`readOnlyHint: false`) so ChatGPT shows its confirmation prompt before executing changes.
+
+### Kill switch
+An in-app switch and an ongoing notification action stop the listener and `cloudflared` immediately. Turning serving back on is a manual action.
+
+### Background and Samsung setup
+To keep serving headlessly across reboots:
+- Set battery usage to **Unrestricted** in Android app info.
+- On Samsung devices: add DroidBridge to **Device care** > **Battery** > **Never sleeping apps**, lock the app in **Recents**, and keep notification permission enabled.
+- Serving starts at boot without opening the app UI.
+
+### Audit log
+DroidBridge records the last 500 voice calls in an on-device ring buffer with redacted arguments, viewable in settings.
+
+### Build from source
+Requirements:
+- JDK 17 (Temurin)
+- Android SDK + NDK `29.0.14206865`
+- Rust toolchain from `rust/rust-toolchain.toml`
+- `cargo-ndk`
+
+Build command:
+```bash
+./gradlew :standalone:assembleDebug
+```
+
 ## Why DroidBridge
 
 - **Official ChatGPT tunnel.** The phone polls OpenAI's Secure MCP Tunnel over HTTPS: no open port,
