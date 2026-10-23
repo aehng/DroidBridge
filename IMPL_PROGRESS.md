@@ -17,3 +17,6 @@ Builds: cargo test runtime+domain green; gradle testDebugUnitTest + assembleDebu
 
 - P1-08/P1-10/P1-11 + JNI wiring (tunnel hostname, kill flag) + Rust voice audit emission: done (Grok D). Grok calls used: 4. Note: one flaky lib test failure seen once in runtime --lib, 4 reruns green.
 - Next: P1-07 (Gemini), P1-09 AuditLog.kt + audit screen (Gemini).
+
+- P1-12: acceptance verified (README fork section 83bde35 + cloudflared notice ce1dee4; LICENSE unchanged). Done.
+- P1-07+P1-09: Gemini delegation del_12e97212 in progress (do not duplicate).
