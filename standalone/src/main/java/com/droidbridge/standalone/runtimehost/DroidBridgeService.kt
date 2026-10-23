@@ -358,7 +358,11 @@ class DroidBridgeService : Service() {
         }
         scope.launch {
             cloudflared.snapshot.collect { snapshot ->
-                cloudflaredStatusText = cloudflaredNotificationText(snapshot)
+                // The relay owns the notification line while paired; the idle tunnel snapshot
+                // otherwise overwrote it with a stale "connecting" status.
+                if (!relay.snapshot.value.paired || relay.snapshot.value.quickTunnelFallback) {
+                    cloudflaredStatusText = cloudflaredNotificationText(snapshot)
+                }
                 snapshot.url?.let { url ->
                     VoiceKillSwitch.tunnelHostname = android.net.Uri.parse(url).host
                     NativeRuntime.nativeMcpSetTunnelHostname(VoiceKillSwitch.tunnelHostname.orEmpty())
@@ -602,8 +606,13 @@ class DroidBridgeService : Service() {
         foregroundReasons.set(ForegroundReason.SpecialUse, active, CLOUDFLARED_FOREGROUND_OWNER)
     }
 
+    @Volatile private var relayForegroundActive = false
+
     private fun setRelayForeground(active: Boolean) {
-        if (active) startService(Intent(this, DroidBridgeService::class.java))
+        // Only kick the service on the inactive->active edge; re-starting it on every relay
+        // snapshot re-entered onStartCommand/restoreRelay and churned the relay socket.
+        if (active && !relayForegroundActive) startService(Intent(this, DroidBridgeService::class.java))
+        relayForegroundActive = active
         foregroundReasons.set(ForegroundReason.SpecialUse, active, RELAY_FOREGROUND_OWNER)
     }
 

@@ -751,7 +751,13 @@ async function handleOne(
         params: {
           name,
           arguments: params.arguments ?? {},
-          _meta: { [PHONE_META_KEY]: PHONE_PROTOCOL_VERSION },
+          _meta: {
+            [PHONE_META_KEY]: PHONE_PROTOCOL_VERSION,
+            // The phone (mcp.rs validate_metadata_headers) rejects tools/call with -32602
+            // unless clientCapabilities is an object; clientInfo is optional but must be well-formed.
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": { name: "droidbridge-relay", version: "1" },
+          },
         },
       };
       const response = await env.DEVICES.get(env.DEVICES.idFromName(account.clerk_user_id)).fetch(
