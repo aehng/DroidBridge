@@ -690,6 +690,7 @@ fn sample_nodes() -> Value {
 struct ScriptedVisualHost {
     calls: Arc<Mutex<Vec<String>>>,
     jpeg: PathBuf,
+    image_unavailable: Option<&'static str>,
 }
 
 impl ScriptedVisualHost {
@@ -699,6 +700,7 @@ impl ScriptedVisualHost {
         Self {
             calls: Arc::new(Mutex::new(Vec::new())),
             jpeg,
+            image_unavailable: None,
         }
     }
 }
@@ -712,6 +714,8 @@ impl McpHost for ScriptedVisualHost {
             let action = payload["action"].as_str().unwrap_or("");
             self.calls.lock().unwrap().push(format!("{tool}.{action}"));
             let include_image = payload["input"]["include_image"] == json!(true);
+            let unavailable = self.image_unavailable.filter(|_| include_image);
+            let include_image = include_image && unavailable.is_none();
             let result = match (tool, action) {
                 ("visual", "observe") => json!({
                     "observation_id": "11111111-1111-4111-8111-111111111111",
@@ -722,6 +726,7 @@ impl McpHost for ScriptedVisualHost {
                     "nodes": sample_nodes(),
                     "image_ref": if include_image { json!("artifact://image/1") } else { Value::Null },
                     "image_format": if include_image { json!("jpeg") } else { Value::Null },
+                    "image_unavailable_reason": unavailable.map_or(Value::Null, |reason| json!(reason)),
                 }),
                 ("visual", "interact") | ("android", "launch") => json!({"delivered": true}),
                 _ => json!({}),
@@ -836,6 +841,23 @@ fn p1_04_screenshot_returns_jpeg_block() {
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).unwrap();
     assert!(bytes.len() < 150 * 1024);
     assert!(body["result"]["structuredContent"].get("latency_ms").is_some());
+    // Pixels ride only in the image block, never in structuredContent or the text block.
+    assert!(body["result"]["structuredContent"].get("image").is_none());
+    assert!(!content[0]["text"].as_str().unwrap().contains(data));
+    served.stop();
+}
+
+#[test]
+fn p1_04_screenshot_capture_failure_is_explicit_error() {
+    let mut host = ScriptedVisualHost::new();
+    host.image_unavailable = Some("SECURE_CONTENT");
+    let (port, served) = serve_visual(host);
+    let body = modern_call(port, "screenshot", json!({}));
+    let result = &body["result"];
+    assert_eq!(result["isError"], json!(true), "{body}");
+    let text = result["content"][0]["text"].as_str().unwrap_or_default().to_owned();
+    assert!(text.contains("screenshot unavailable"), "{body}");
+    assert!(text.contains("SECURE_CONTENT"), "{body}");
     served.stop();
 }
 

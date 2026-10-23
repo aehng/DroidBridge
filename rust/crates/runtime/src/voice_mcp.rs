@@ -135,16 +135,20 @@ impl<H: McpHost> HostVoiceExecutor<H> {
         let raw = self.observe(include_image).await?;
         let mut projected = compact_voice_projection(&raw);
         if include_image {
-            if let Some(block) = self.inline_observe_image(&raw).await? {
-                projected["image"] = block;
-            }
+            // A screenshot request must yield pixels or an explicit failure; returning only the
+            // node tree made a capture failure look like success to the caller.
+            projected["image"] = self.inline_observe_image(&raw).await?;
         }
         Ok(projected)
     }
 
-    async fn inline_observe_image(&self, raw: &Value) -> Result<Option<Value>, DomainError> {
+    async fn inline_observe_image(&self, raw: &Value) -> Result<Value, DomainError> {
         let Some(uri) = raw.get("image_ref").and_then(Value::as_str) else {
-            return Ok(None);
+            return Err(screenshot_unavailable(
+                raw.get("image_unavailable_reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("NO_IMAGE"),
+            ));
         };
         let reply = self
             .host
@@ -159,10 +163,10 @@ impl<H: McpHost> HostVoiceExecutor<H> {
             reply.payload.get("mime").and_then(Value::as_str),
             reply.descriptor,
         ) else {
-            return Ok(None);
+            return Err(screenshot_unavailable("ARTIFACT_UNREADABLE"));
         };
         if !matches!(mime, "image/jpeg" | "image/png" | "image/heic") || size == 0 {
-            return Ok(None);
+            return Err(screenshot_unavailable("UNSUPPORTED_IMAGE"));
         }
         let mut bytes = Vec::new();
         (&descriptor)
@@ -170,13 +174,13 @@ impl<H: McpHost> HostVoiceExecutor<H> {
             .read_to_end(&mut bytes)
             .map_err(|_| DomainError::new(contract::ErrorCode::IoError, "voice image read failed"))?;
         if bytes.len() as u64 != size {
-            return Ok(None);
+            return Err(screenshot_unavailable("ARTIFACT_TRUNCATED"));
         }
-        Ok(Some(json!({
+        Ok(json!({
             "type": "image",
             "mimeType": mime,
             "data": STANDARD.encode(bytes),
-        })))
+        }))
     }
 
     async fn interact_then_screen(
@@ -231,6 +235,26 @@ impl<H: McpHost> HostVoiceExecutor<H> {
             Err(error) => Err(error),
         }
     }
+}
+
+/// Explicit screenshot failure; SECURE_CONTENT / mostly-black covers FLAG_SECURE windows.
+fn screenshot_unavailable(reason: &str) -> DomainError {
+    // DomainError reasons are static; map the host token onto a fixed message.
+    let message = match reason {
+        "SECURE_CONTENT" => "screenshot unavailable: SECURE_CONTENT (app blocks capture, FLAG_SECURE)",
+        "PERMISSION_DENIED" => "screenshot unavailable: PERMISSION_DENIED",
+        "CAPABILITY_UNAVAILABLE" => "screenshot unavailable: CAPABILITY_UNAVAILABLE",
+        "RESOURCE_LIMIT" => "screenshot unavailable: RESOURCE_LIMIT (capture rate-limited, retry)",
+        "STALE_AUTHORITY" => "screenshot unavailable: STALE_AUTHORITY",
+        "TIMEOUT" => "screenshot unavailable: TIMEOUT",
+        "IO_ERROR" => "screenshot unavailable: IO_ERROR",
+        "NO_IMAGE" => "screenshot unavailable: NO_IMAGE (no capture provider returned pixels)",
+        "ARTIFACT_UNREADABLE" => "screenshot unavailable: ARTIFACT_UNREADABLE",
+        "UNSUPPORTED_IMAGE" => "screenshot unavailable: UNSUPPORTED_IMAGE",
+        "ARTIFACT_TRUNCATED" => "screenshot unavailable: ARTIFACT_TRUNCATED",
+        _ => "screenshot unavailable: capture failed",
+    };
+    DomainError::new(contract::ErrorCode::IoError, message)
 }
 
 fn is_stale(error: &DomainError) -> bool {
@@ -1037,8 +1061,11 @@ impl VoiceMcp {
                         .entry("latency_ms")
                         .or_insert_with(|| json!(latency_ms));
                 }
+                // Keep the base64 pixels out of the text block and structuredContent; they ride only
+                // in the MCP image content block.
+                let image = structured.as_object_mut().and_then(|object| object.remove("image"));
                 let mut content = vec![json!({"type": "text", "text": structured.to_string()})];
-                if let Some(image) = structured.get("image").cloned() {
+                if let Some(image) = image {
                     if image.get("type").and_then(Value::as_str) == Some("image") {
                         content.push(image);
                     }
