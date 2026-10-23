@@ -2,8 +2,7 @@ name = "droidbridge-relay"
 main = "src/index.ts"
 compatibility_date = "2026-10-23"
 workers_dev = true
-# Custom domain: uncomment after DNS is pointed at this Worker.
-# routes = [{ pattern = "droid.synqra.info", custom_domain = true }]
+routes = [{ pattern = "droid.synqra.info", custom_domain = true }]
 
 [[durable_objects.bindings]]
 name = "DEVICES"
@@ -15,12 +14,12 @@ new_sqlite_classes = ["DeviceRelay"]
 
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "REPLACE_WITH_KV_ID"
+id = "20dfef5e524a4dfbadb6303a5aa1e7fc"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "droidbridge-relay"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "0424c36b-269d-4e08-b24d-78d4ff96f10d"
 migrations_dir = "migrations"
 
 [vars]
