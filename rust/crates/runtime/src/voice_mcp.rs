@@ -1244,7 +1244,11 @@ fn tool_def(name: &str, description: &str, read_only: bool, schema: Value) -> Va
         "name": name,
         "description": description,
         "inputSchema": schema,
-        "annotations": {"readOnlyHint": read_only},
+        "annotations": {
+            "readOnlyHint": read_only,
+            "destructiveHint": !read_only,
+            "openWorldHint": false,
+        },
     })
 }
 
@@ -1332,3 +1336,60 @@ fn finish_inflight(
 }
 
 
+
+#[cfg(test)]
+mod compat_tests {
+    use super::*;
+
+    fn req(headers: &[(&str, &str)]) -> McpRequest {
+        McpRequest {
+            method: "POST".to_owned(),
+            headers: headers.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn origins_chatgpt_openai_and_absent_pass() {
+        assert!(voice_origin_allowed(&req(&[])));
+        assert!(voice_origin_allowed(&req(&[("origin", "https://chatgpt.com")])));
+        assert!(voice_origin_allowed(&req(&[("origin", "https://chat.openai.com")])));
+        assert!(!voice_origin_allowed(&req(&[("origin", "https://evil.example")])));
+    }
+
+    #[test]
+    fn trycloudflare_host_passes() {
+        let host = "abc-def.trycloudflare.com";
+        assert!(voice_host_allowed(&req(&[("host", host)]), 8765, Some(host)));
+        assert!(!voice_host_allowed(&req(&[("host", "other.example")]), 8765, Some(host)));
+    }
+
+    #[test]
+    fn legacy_versions_echo_and_never_force_modern() {
+        for version in VOICE_LEGACY_VERSIONS {
+            let mut params = Map::new();
+            params.insert("protocolVersion".to_owned(), json!(version));
+            assert!(matches!(
+                classify_era(&req(&[]), "initialize", &params),
+                Era::Legacy(v) if v == version
+            ));
+        }
+        assert!(matches!(
+            classify_era(&req(&[]), "initialize", &Map::new()),
+            Era::Legacy(_)
+        ));
+    }
+
+    #[test]
+    fn tool_annotations_are_complete() {
+        let tools = voice_tool_definitions();
+        for tool in tools.as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            let ann = &tool["annotations"];
+            let read_only = matches!(name, "screen" | "screenshot");
+            assert_eq!(ann["readOnlyHint"], json!(read_only), "{name}");
+            assert_eq!(ann["destructiveHint"], json!(!read_only), "{name}");
+            assert_eq!(ann["openWorldHint"], json!(false), "{name}");
+        }
+    }
+}

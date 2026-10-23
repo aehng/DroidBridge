@@ -295,6 +295,17 @@ async fn respond<H: McpHost>(
     let public_voice_path = path.starts_with("/mcp/");
 
     let mcp_path = path == "/mcp" || path.starts_with("/mcp/");
+    let cors_origin = cors_origin_for(&mcp_request_head);
+    if http_method == hyper::Method::OPTIONS && mcp_path {
+        let route = classify_preflight(&path, &mcp_request_head, port, tunnel, &accepted);
+        if !matches!(route, Route::Voice) {
+            return Ok(empty(match route {
+                Route::NotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::FORBIDDEN,
+            }));
+        }
+        return Ok(with_cors(empty(StatusCode::NO_CONTENT), cors_origin.as_deref(), true));
+    }
     if http_method != hyper::Method::POST {
         if mcp_path {
             if public_voice_path {
@@ -364,7 +375,7 @@ async fn respond<H: McpHost>(
             let response = shared.voice.handle(&mcp_request, conn.as_ref()).await;
             let outcome = voice_outcome(&mcp_request, &response);
             emit_public_audit(&shared, &mcp_request.body, outcome, started);
-            Ok(encode_voice(response))
+            Ok(with_cors(encode_voice(response), cors_origin.as_deref(), false))
         }
         _ => Ok(empty(StatusCode::INTERNAL_SERVER_ERROR)),
     }
@@ -468,6 +479,67 @@ fn classify_route(
         return Route::Voice;
     }
     Route::Forbidden
+}
+
+pub(crate) const CORS_ALLOW_HEADERS: &str =
+    "authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id";
+pub(crate) const CORS_ALLOW_METHODS: &str = "GET, POST, DELETE, OPTIONS";
+pub(crate) const CORS_EXPOSE_HEADERS: &str = "Mcp-Session-Id, MCP-Protocol-Version";
+
+fn cors_origin_for(request: &McpRequest) -> Option<String> {
+    match crate::single_header(request, "origin") {
+        Some(origin) if voice_origin_allowed(request) => Some(origin.to_owned()),
+        _ => None,
+    }
+}
+
+/// Preflights carry no bearer token, so tunnel `/mcp` preflight skips the bearer check.
+fn classify_preflight(
+    path: &str,
+    request: &McpRequest,
+    port: u16,
+    tunnel_hostname: Option<&str>,
+    accepted: &str,
+) -> Route {
+    match classify_route(path, request, port, tunnel_hostname, accepted) {
+        Route::Unauthorized => Route::Voice,
+        Route::Facade => Route::Voice,
+        other => other,
+    }
+}
+
+fn with_cors(
+    mut response: Response<Full<Bytes>>,
+    origin: Option<&str>,
+    preflight: bool,
+) -> Response<Full<Bytes>> {
+    let Some(origin) = origin else {
+        return response;
+    };
+    let headers = response.headers_mut();
+    if let Ok(value) = header::HeaderValue::from_str(origin) {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+    }
+    headers.insert(header::VARY, header::HeaderValue::from_static("Origin"));
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        header::HeaderValue::from_static(CORS_EXPOSE_HEADERS),
+    );
+    if preflight {
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            header::HeaderValue::from_static(CORS_ALLOW_METHODS),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            header::HeaderValue::from_static(CORS_ALLOW_HEADERS),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_MAX_AGE,
+            header::HeaderValue::from_static("600"),
+        );
+    }
+    response
 }
 
 fn take_authenticated(limits: &IngressLimits) -> bool {
@@ -686,5 +758,40 @@ mod tests {
         silent.read_to_end(&mut rest).unwrap();
 
         served.stop();
+    }
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::*;
+
+    #[test]
+    fn preflight_cors_headers() {
+        let r = with_cors(empty(StatusCode::NO_CONTENT), Some("https://chatgpt.com"), true);
+        let h = r.headers();
+        assert_eq!(h["access-control-allow-origin"], "https://chatgpt.com");
+        assert_eq!(h["access-control-allow-methods"], CORS_ALLOW_METHODS);
+        assert_eq!(h["access-control-allow-headers"], CORS_ALLOW_HEADERS);
+        assert_eq!(h["access-control-expose-headers"], CORS_EXPOSE_HEADERS);
+        let plain = with_cors(empty(StatusCode::OK), None, false);
+        assert!(plain.headers().get("access-control-allow-origin").is_none());
+    }
+
+    #[test]
+    fn tunnel_preflight_without_bearer_is_allowed() {
+        let host = "abc.trycloudflare.com";
+        let request = McpRequest {
+            method: "OPTIONS".to_owned(),
+            headers: vec![
+                ("host".to_owned(), host.to_owned()),
+                ("origin".to_owned(), "https://chatgpt.com".to_owned()),
+            ],
+            body: Vec::new(),
+        };
+        assert!(matches!(
+            classify_preflight("/mcp", &request, 8765, Some(host), "secret"),
+            Route::Voice
+        ));
+        assert_eq!(cors_origin_for(&request).as_deref(), Some("https://chatgpt.com"));
     }
 }
