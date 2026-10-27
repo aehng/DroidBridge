@@ -2,6 +2,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import worker, {
   DeviceRelay,
   hash,
+  VOICE_INSTRUCTIONS,
+  VOICE_TOOLS,
   type DurableObjectState,
   type Env,
   type KVNamespace,
@@ -658,5 +660,199 @@ describe("MCP notifications", () => {
       env,
     );
     expect(response.status).toBe(202);
+  });
+
+  it("answers initialize with instructions and tools/list with all 17 tools", async () => {
+    const { env } = harness();
+    const access = await issueAccess(env, env.DB as unknown as TestD1);
+
+    const initResp = await worker.fetch(
+      new Request("https://droid.example/mcp", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${access}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-11-25" },
+        }),
+      }),
+      env,
+    );
+    expect(initResp.status).toBe(200);
+    const initData = (await initResp.json()) as {
+      result: { instructions: string; protocolVersion: string };
+    };
+    expect(initData.result.instructions).toBe(VOICE_INSTRUCTIONS);
+    expect(initData.result.instructions).toContain("DroidBridge controls the user's Android phone. Rules:");
+    expect(initData.result.instructions).toContain("CONFIRM OUT LOUD");
+    expect(initData.result.instructions).toContain("PREFER BACKGROUND SHELL");
+    expect(initData.result.instructions).toContain("SHIZUKU");
+
+    const listResp = await worker.fetch(
+      new Request("https://droid.example/mcp", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${access}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      }),
+      env,
+    );
+    expect(listResp.status).toBe(200);
+    const listData = (await listResp.json()) as {
+      result: {
+        tools: Array<{
+          name: string;
+          title?: string;
+          description: string;
+          inputSchema: Record<string, unknown>;
+          annotations: {
+            readOnlyHint: boolean;
+            destructiveHint: boolean;
+            openWorldHint: boolean;
+            idempotentHint?: boolean;
+          };
+        }>;
+      };
+    };
+    expect(listData.result.tools).toHaveLength(17);
+    expect(VOICE_TOOLS).toHaveLength(17);
+
+    const readToolNames = new Set([
+      "screen",
+      "screenshot",
+      "shizuku_status",
+      "automation_list",
+      "automation_get",
+    ]);
+
+    for (const tool of listData.result.tools) {
+      expect(tool.title).toBeDefined();
+      expect(tool.title!.length).toBeGreaterThan(0);
+
+      const isRead = readToolNames.has(tool.name);
+      if (isRead) {
+        expect(tool.description.startsWith("Use this when")).toBe(true);
+        expect(tool.annotations).toEqual({
+          readOnlyHint: true,
+          destructiveHint: false,
+          openWorldHint: false,
+        });
+      } else {
+        expect(tool.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: false,
+          openWorldHint: false,
+          idempotentHint: false,
+        });
+        if (["automation_create", "automation_update", "automation_delete"].includes(tool.name)) {
+          expect(tool.description.startsWith(
+            "CRITICAL: before calling, say out loud the automation's name, trigger and actions (or which one is deleted) and wait for the user's spoken yes."
+          )).toBe(true);
+        } else {
+          expect(tool.description.startsWith("Use this when")).toBe(true);
+          expect(tool.description).toContain(
+            "Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+          );
+        }
+      }
+    }
+
+    const shellTool = listData.result.tools.find((t) => t.name === "shell");
+    expect(shellTool).toBeDefined();
+    expect(shellTool?.description).toContain(
+      "Requires Shizuku running and authorized (check shizuku_status first). Prefer this over driving apps on screen.",
+    );
+    expect(shellTool?.inputSchema).toHaveProperty("required", ["command"]);
+
+    const createTool = listData.result.tools.find((t) => t.name === "automation_create");
+    expect(createTool).toBeDefined();
+    expect(createTool?.inputSchema).toHaveProperty("required", ["name", "enabled", "trigger", "action"]);
+    expect((createTool?.inputSchema as any).properties.trigger).toHaveProperty("oneOf");
+    expect((createTool?.inputSchema as any).properties.action).toHaveProperty("oneOf");
+
+    const updateTool = listData.result.tools.find((t) => t.name === "automation_update");
+    expect(updateTool).toBeDefined();
+    expect(updateTool?.inputSchema).toHaveProperty("required", [
+      "automation_id",
+      "expected_revision",
+      "name",
+      "enabled",
+      "trigger",
+      "action",
+    ]);
+    expect((updateTool?.inputSchema as any).properties.trigger).toHaveProperty("oneOf");
+    expect((updateTool?.inputSchema as any).properties.action).toHaveProperty("oneOf");
+  });
+
+  it("forwards automation_update tool call to phone", async () => {
+    const { env, devices } = harness();
+    const { relay, sockets } = relayHarness();
+    const socket = new RelaySocket();
+    sockets.push(socket);
+    devices.set("clerk-user-1", {
+      fetch: async (request) => {
+        const p = relay.fetch(request);
+        await vi.waitFor(() => expect(socket.sent.length).toBeGreaterThan(0));
+        const frame = JSON.parse(socket.sent.at(-1)!) as { id: string };
+        await relay.webSocketMessage(
+          socket as unknown as WebSocket,
+          JSON.stringify({
+            type: "rpc_result",
+            id: frame.id,
+            status: 200,
+            body: {
+              jsonrpc: "2.0",
+              id: 42,
+              result: {
+                content: [{ type: "text", text: "automation updated" }],
+              },
+            },
+          }),
+        );
+        return p;
+      },
+    });
+    const access = await issueAccess(env, env.DB as unknown as TestD1);
+    const response = await worker.fetch(
+      new Request("https://droid.example/mcp", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${access}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 42,
+          method: "tools/call",
+          params: {
+            name: "automation_update",
+            arguments: {
+              automation_id: "00000000-0000-0000-0000-000000000001",
+              expected_revision: 1,
+              name: "updated_automation",
+              enabled: true,
+              trigger: { type: "at", at: "2026-10-27T08:00:00Z" },
+              action: { type: "delay", duration_ms: 5000 },
+            },
+          },
+        }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data).toEqual({
+      jsonrpc: "2.0",
+      id: 42,
+      result: {
+        content: [{ type: "text", text: "automation updated" }],
+      },
+    });
   });
 });

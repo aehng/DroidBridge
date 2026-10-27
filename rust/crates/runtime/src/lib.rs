@@ -44,8 +44,10 @@ pub use voice_audit::{
     encode_voice_audit, public_request_name, redact_voice_arguments, VoiceAuditEvent,
 };
 pub use voice_mcp::{
-    compact_voice_projection, HostVoiceExecutor, StubVoiceExecutor, VoiceConnection,
-    VoiceHttpResponse, VoiceMcp, VoiceToolExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
+    automation_action_schema, automation_trigger_schema, compact_voice_projection,
+    voice_tool_definitions, HostVoiceExecutor, StubVoiceExecutor, VoiceConnection,
+    VoiceHttpResponse, VoiceMcp, VoiceToolExecutor, SHIZUKU_NOT_CONNECTED_CODE,
+    SHIZUKU_NOT_CONNECTED_MSG, VOICE_INSTRUCTIONS, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
 };
 pub use network::*;
 pub use ports::*;

@@ -1,9 +1,10 @@
 //! P1-02 / P1-03 voice MCP adapter and public ingress tests (ephemeral loopback port).
 
 use runtime::{
-    HostVoiceExecutor, McpArtifactReply, McpFacade, McpHost, McpListener, McpListenerConfig,
-    McpRequest, PortFuture, StubVoiceExecutor, VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES,
-    VoiceConnection, VoiceMcp, VoiceToolExecutor, compact_voice_projection, path_secret_matches,
+    compact_voice_projection, path_secret_matches, voice_tool_definitions, HostVoiceExecutor,
+    McpArtifactReply, McpFacade, McpHost, McpListener, McpListenerConfig, McpRequest, PortFuture,
+    StubVoiceExecutor, SHIZUKU_NOT_CONNECTED_CODE, SHIZUKU_NOT_CONNECTED_MSG, VOICE_INSTRUCTIONS,
+    VOICE_SUPPORTED_VERSIONS, VOICE_TOOL_NAMES, VoiceConnection, VoiceMcp, VoiceToolExecutor,
 };
 use serde_json::{Value, json};
 use std::{
@@ -180,6 +181,7 @@ fn legacy_initialize_list_and_stub_call() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
     assert_ne!(body["result"]["protocolVersion"], "2026-07-28");
+    assert_eq!(body["result"]["instructions"], VOICE_INSTRUCTIONS);
     let session = headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("mcp-session-id"))
@@ -862,10 +864,28 @@ fn p1_04_screenshot_capture_failure_is_explicit_error() {
 }
 
 #[test]
-fn p1_04_tools_list_names_exactly_eight() {
+fn p1_04_tools_list_names_all_seventeen() {
     assert_eq!(
         VOICE_TOOL_NAMES,
-        ["screen", "tap", "long_press", "swipe", "type", "open_app", "navigate", "screenshot"]
+        [
+            "screen",
+            "tap",
+            "long_press",
+            "swipe",
+            "type",
+            "open_app",
+            "navigate",
+            "screenshot",
+            "shizuku_status",
+            "shell",
+            "automation_list",
+            "automation_get",
+            "automation_create",
+            "automation_update",
+            "automation_set_enabled",
+            "automation_delete",
+            "automation_run",
+        ]
     );
 }
 
@@ -927,4 +947,459 @@ fn voice_audit_one_row_per_request_and_redaction() {
     assert_eq!(tap_rows.len(), 1, "{recorded:?}");
     assert!(recorded.iter().any(|line| line.contains("auth_failure")));
     assert!(recorded.iter().any(|line| line.contains("password_field")));
+}
+
+#[derive(Clone)]
+struct RecordingHost {
+    submitted: Arc<Mutex<Vec<Value>>>,
+    shizuku_state: &'static str,
+    command_error: Option<contract::ErrorCode>,
+}
+
+impl RecordingHost {
+    fn new(shizuku_state: &'static str) -> (Self, Arc<Mutex<Vec<Value>>>) {
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                submitted: Arc::clone(&submitted),
+                shizuku_state,
+                command_error: None,
+            },
+            submitted,
+        )
+    }
+
+    fn with_command_error(shizuku_state: &'static str, err: contract::ErrorCode) -> (Self, Arc<Mutex<Vec<Value>>>) {
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                submitted: Arc::clone(&submitted),
+                shizuku_state,
+                command_error: Some(err),
+            },
+            submitted,
+        )
+    }
+}
+
+impl McpHost for RecordingHost {
+    fn submit<'a>(&'a self, envelope: Vec<u8>) -> PortFuture<'a, Result<Vec<u8>, domain::DomainError>> {
+        Box::pin(async move {
+            let request: Value = serde_json::from_slice(&envelope).unwrap();
+            let payload = request["payload"].clone();
+            self.submitted.lock().unwrap().push(payload.clone());
+            let req_id = &request["request_id"];
+
+            if payload["tool"] == "context" && payload["action"] == "status" {
+                return Ok(serde_json::to_vec(&json!({
+                    "protocol_version": 1,
+                    "request_id": req_id,
+                    "outcome": "success",
+                    "result": {
+                        "components": {
+                            "shizuku": {
+                                "state": self.shizuku_state,
+                                "integration_version": "1.0",
+                            }
+                        },
+                        "grants": {
+                            "shizuku.shell": {
+                                "state": self.shizuku_state,
+                            }
+                        },
+                        "capabilities": {
+                            "command.shell": {
+                                "state": self.shizuku_state,
+                            }
+                        }
+                    }
+                })).unwrap());
+            }
+
+            if payload["tool"] == "command" && payload["action"] == "run" {
+                if let Some(err) = self.command_error {
+                    return Err(domain::DomainError::new(err, "command failed"));
+                }
+                return Ok(serde_json::to_vec(&json!({
+                    "protocol_version": 1,
+                    "request_id": req_id,
+                    "outcome": "success",
+                    "result": {
+                        "stdout": "uid=2000(shell) gid=2000(shell)\n",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "stdout_truncated": false,
+                        "stderr_truncated": false,
+                        "duration_ms": 42,
+                    }
+                })).unwrap());
+            }
+
+            Ok(serde_json::to_vec(&json!({
+                "protocol_version": 1,
+                "request_id": req_id,
+                "outcome": "success",
+                "result": {"ok": true, "echo": payload}
+            })).unwrap())
+        })
+    }
+
+    fn artifact_query<'a>(
+        &'a self,
+        _query: Value,
+    ) -> PortFuture<'a, Result<McpArtifactReply, domain::DomainError>> {
+        Box::pin(async {
+            Err(domain::DomainError::new(
+                contract::ErrorCode::IoError,
+                "unused",
+            ))
+        })
+    }
+}
+
+#[test]
+fn tools_list_contains_all_new_tools_with_annotations() {
+    let tools = voice_tool_definitions();
+    let tool_list = tools.as_array().expect("tools array");
+    assert_eq!(tool_list.len(), 17);
+
+    let read_tool_names = [
+        "screen",
+        "screenshot",
+        "shizuku_status",
+        "automation_list",
+        "automation_get",
+    ];
+
+    for tool in tool_list {
+        let name = tool["name"].as_str().expect("tool name");
+        assert!(tool.get("title").and_then(Value::as_str).is_some());
+        let desc = tool["description"].as_str().expect("description");
+
+        let ann = &tool["annotations"];
+        let is_read = read_tool_names.contains(&name);
+        if is_read {
+            assert!(desc.starts_with("Use this when"), "description for {name} must start with 'Use this when'");
+            assert_eq!(ann["readOnlyHint"], json!(true), "{name}");
+            assert_eq!(ann["destructiveHint"], json!(false), "{name}");
+            assert_eq!(ann["openWorldHint"], json!(false), "{name}");
+        } else {
+            assert_eq!(ann["readOnlyHint"], json!(false), "{name}");
+            assert_eq!(ann["destructiveHint"], json!(false), "{name}");
+            assert_eq!(ann["openWorldHint"], json!(false), "{name}");
+            assert_eq!(ann["idempotentHint"], json!(false), "{name}");
+            if matches!(name, "automation_create" | "automation_update" | "automation_delete") {
+                assert!(
+                    desc.starts_with("CRITICAL: before calling, say out loud the automation's name, trigger and actions (or which one is deleted) and wait for the user's spoken yes."),
+                    "{name} description must start with critical confirmation notice"
+                );
+            } else {
+                assert!(desc.starts_with("Use this when"), "description for {name} must start with 'Use this when'");
+                assert!(
+                    desc.contains("Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first."),
+                    "{name} description must contain confirmation notice"
+                );
+            }
+        }
+    }
+
+    let shell = tool_list.iter().find(|t| t["name"] == "shell").expect("shell tool");
+    assert!(shell["description"].as_str().unwrap().contains(
+        "Requires Shizuku running and authorized (check shizuku_status first). Prefer this over driving apps on screen."
+    ));
+    assert_eq!(shell["inputSchema"]["required"], json!(["command"]));
+
+    let auto_create = tool_list.iter().find(|t| t["name"] == "automation_create").expect("automation_create tool");
+    assert_eq!(auto_create["inputSchema"]["required"], json!(["name", "enabled", "trigger", "action"]));
+    assert!(auto_create["inputSchema"]["properties"]["trigger"].get("oneOf").is_some());
+    assert!(auto_create["inputSchema"]["properties"]["action"].get("oneOf").is_some());
+
+    let auto_update = tool_list.iter().find(|t| t["name"] == "automation_update").expect("automation_update tool");
+    assert_eq!(auto_update["inputSchema"]["required"], json!(["automation_id", "expected_revision", "name", "enabled", "trigger", "action"]));
+    assert!(auto_update["inputSchema"]["properties"]["trigger"].get("oneOf").is_some());
+    assert!(auto_update["inputSchema"]["properties"]["action"].get("oneOf").is_some());
+
+    let auto_set_enabled = tool_list.iter().find(|t| t["name"] == "automation_set_enabled").expect("automation_set_enabled tool");
+    assert_eq!(auto_set_enabled["inputSchema"]["required"], json!(["automation_id", "enabled", "expected_revision"]));
+
+    let auto_delete = tool_list.iter().find(|t| t["name"] == "automation_delete").expect("automation_delete tool");
+    assert_eq!(auto_delete["inputSchema"]["required"], json!(["automation_id", "expected_revision"]));
+
+    let auto_run = tool_list.iter().find(|t| t["name"] == "automation_run").expect("automation_run tool");
+    assert_eq!(auto_run["inputSchema"]["required"], json!(["automation_id"]));
+}
+
+#[test]
+fn initialize_returns_instructions() {
+    let (port, served) = serve(Arc::new(StubVoiceExecutor), Default::default());
+    let host = format!("127.0.0.1:{port}");
+    let path = format!("/mcp/{TOKEN}");
+
+    // Legacy initialize
+    let init = fixture("synthetic_p1_00_legacy_initialize.json");
+    let (status, _, body, _) = http(port, &host, &path, &[], &init);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["instructions"], VOICE_INSTRUCTIONS);
+    assert!(VOICE_INSTRUCTIONS.starts_with("DroidBridge controls the user's Android phone. Rules:"));
+    assert!(VOICE_INSTRUCTIONS.contains("CONFIRM OUT LOUD"));
+    assert!(VOICE_INSTRUCTIONS.contains("PREFER BACKGROUND SHELL"));
+    assert!(VOICE_INSTRUCTIONS.contains("SHIZUKU"));
+
+    // Modern discover
+    let discover = fixture("synthetic_p1_00_modern_discover.json");
+    let extra = [
+        ("MCP-Protocol-Version", "2026-07-28"),
+        ("Mcp-Method", "server/discover"),
+    ];
+    let (status, _, body, _) = http(port, &host, &path, &extra, &discover);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["instructions"], VOICE_INSTRUCTIONS);
+
+    served.stop();
+}
+
+#[tokio::test]
+async fn shell_maps_to_command_mother_tool() {
+    let (host, submitted) = RecordingHost::new("available");
+    let executor = HostVoiceExecutor::new(host);
+
+    let result = executor
+        .call(
+            "shell",
+            json!({
+                "command": "pm list packages",
+                "timeout_ms": 25000,
+                "max_output_bytes": 8192
+            }),
+            "req-shell-1".to_owned(),
+        )
+        .await
+        .expect("shell call success");
+
+    assert_eq!(result["stdout"], "uid=2000(shell) gid=2000(shell)\n");
+    assert_eq!(result["stderr"], "");
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(result["duration_ms"], 42);
+
+    let recorded = submitted.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2); // 1 context.status check + 1 command.run
+    let cmd = &recorded[1];
+    assert_eq!(cmd["tool"], "command");
+    assert_eq!(cmd["action"], "run");
+    assert_eq!(cmd["input"]["command"], "pm list packages");
+    assert_eq!(cmd["input"]["run_as"], "shell");
+    assert_eq!(cmd["input"]["timeout_ms"], 25000);
+    assert_eq!(cmd["input"]["max_output_bytes"], 8192);
+    assert_eq!(cmd["input"]["as_task"], false);
+}
+
+#[tokio::test]
+async fn shizuku_not_connected_mapping() {
+    // 1. Shizuku unavailable in status
+    let (host, _) = RecordingHost::new("unavailable");
+    let executor = HostVoiceExecutor::new(host);
+
+    let status = executor
+        .call("shizuku_status", json!({}), "req-shizuku-1".to_owned())
+        .await
+        .expect("shizuku_status call success");
+    assert_eq!(status["connected"], false);
+    assert_eq!(status["running"], false);
+    assert_eq!(status["authorized"], false);
+
+    let shell_err = executor
+        .call("shell", json!({"command": "id"}), "req-shell-err-1".to_owned())
+        .await
+        .expect("returns tool error structure");
+    assert_eq!(shell_err["isError"], true);
+    assert_eq!(shell_err["code"], SHIZUKU_NOT_CONNECTED_CODE);
+    assert_eq!(shell_err["message"], SHIZUKU_NOT_CONNECTED_MSG);
+
+    // 2. Command returns CAPABILITY_UNAVAILABLE error
+    let (err_host, _) = RecordingHost::with_command_error("available", contract::ErrorCode::CapabilityUnavailable);
+    let executor_err = HostVoiceExecutor::new(err_host);
+    let shell_cap_err = executor_err
+        .call("shell", json!({"command": "id"}), "req-shell-err-2".to_owned())
+        .await
+        .expect("returns tool error structure");
+    assert_eq!(shell_cap_err["isError"], true);
+    assert_eq!(shell_cap_err["code"], SHIZUKU_NOT_CONNECTED_CODE);
+    assert_eq!(shell_cap_err["message"], SHIZUKU_NOT_CONNECTED_MSG);
+}
+
+#[test]
+fn shizuku_not_connected_http() {
+    let listener = StdTcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let facade = McpFacade::new(CannedHost, port, "0.1.0".to_owned()).unwrap();
+    let (unavail_host, _) = RecordingHost::new("unavailable");
+    let served = McpListener::serve_with_config(
+        listener,
+        TOKEN.to_owned(),
+        facade,
+        McpListenerConfig {
+            tunnel_hostname: Some(TUNNEL_HOST.to_owned()),
+            kill_flag: Default::default(),
+            voice_executor: Some(Arc::new(HostVoiceExecutor::new(unavail_host))),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let host = format!("127.0.0.1:{port}");
+    let path = format!("/mcp/{TOKEN}");
+    let init = fixture("synthetic_p1_00_legacy_initialize.json");
+    let (_, headers, _, _) = http(port, &host, &path, &[], &init);
+    let session = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("mcp-session-id"))
+        .unwrap()
+        .1
+        .clone();
+
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+            "name": "shell",
+            "arguments": {"command": "id"}
+        }
+    });
+    let (status, _, body, _) = http(
+        port,
+        &host,
+        &path,
+        &[("Mcp-Session-Id", session.as_str())],
+        &call,
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["result"]["isError"], true);
+    assert_eq!(body["result"]["structuredContent"]["code"], SHIZUKU_NOT_CONNECTED_CODE);
+    assert_eq!(body["result"]["structuredContent"]["message"], SHIZUKU_NOT_CONNECTED_MSG);
+
+    served.stop();
+}
+
+#[tokio::test]
+async fn automation_tool_mapping() {
+    let (host, submitted) = RecordingHost::new("available");
+    let executor = HostVoiceExecutor::new(host);
+
+    // 1. automation_list
+    executor
+        .call("automation_list", json!({"limit": 42}), "req-auto-list".to_owned())
+        .await
+        .unwrap();
+
+    // 2. automation_get
+    executor
+        .call(
+            "automation_get",
+            json!({"automation_id": "00000000-0000-0000-0000-000000000001", "history_limit": 15}),
+            "req-auto-get".to_owned(),
+        )
+        .await
+        .unwrap();
+
+    // 3. automation_create
+    let create_args = json!({
+        "name": "mute_at_night",
+        "enabled": true,
+        "trigger": {"type": "at", "at": "22:00:00"},
+        "action": {"tool": "android", "call": {"clipboard": {"clear": {}}}}
+    });
+    executor
+        .call("automation_create", create_args.clone(), "req-auto-create".to_owned())
+        .await
+        .unwrap();
+
+    // 4. automation_update
+    let update_args = json!({
+        "automation_id": "00000000-0000-0000-0000-000000000001",
+        "expected_revision": 1,
+        "name": "mute_at_night_v2",
+        "enabled": false,
+        "trigger": {"type": "interval", "every_ms": 3600000},
+        "action": {"type": "delay", "duration_ms": 5000}
+    });
+    executor
+        .call("automation_update", update_args.clone(), "req-auto-update".to_owned())
+        .await
+        .unwrap();
+
+    // 5. automation_set_enabled
+    executor
+        .call(
+            "automation_set_enabled",
+            json!({
+                "automation_id": "00000000-0000-0000-0000-000000000001",
+                "enabled": false,
+                "expected_revision": 2
+            }),
+            "req-auto-enable".to_owned(),
+        )
+        .await
+        .unwrap();
+
+    // 6. automation_delete
+    executor
+        .call(
+            "automation_delete",
+            json!({
+                "automation_id": "00000000-0000-0000-0000-000000000001",
+                "expected_revision": 3
+            }),
+            "req-auto-delete".to_owned(),
+        )
+        .await
+        .unwrap();
+
+    // 7. automation_run
+    executor
+        .call(
+            "automation_run",
+            json!({"automation_id": "00000000-0000-0000-0000-000000000001"}),
+            "req-auto-run".to_owned(),
+        )
+        .await
+        .unwrap();
+
+    let recorded = submitted.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 7);
+
+    assert_eq!(recorded[0]["tool"], "automation");
+    assert_eq!(recorded[0]["action"], "list");
+    assert_eq!(recorded[0]["input"]["limit"], 42);
+
+    assert_eq!(recorded[1]["tool"], "automation");
+    assert_eq!(recorded[1]["action"], "get");
+    assert_eq!(recorded[1]["input"]["automation_id"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(recorded[1]["input"]["history_limit"], 15);
+
+    assert_eq!(recorded[2]["tool"], "automation");
+    assert_eq!(recorded[2]["action"], "save");
+    assert_eq!(recorded[2]["input"]["name"], "mute_at_night");
+
+    assert_eq!(recorded[3]["tool"], "automation");
+    assert_eq!(recorded[3]["action"], "save");
+    assert_eq!(recorded[3]["input"]["automation_id"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(recorded[3]["input"]["expected_revision"], 1);
+    assert_eq!(recorded[3]["input"]["name"], "mute_at_night_v2");
+    assert_eq!(recorded[3]["input"]["enabled"], false);
+
+    assert_eq!(recorded[4]["tool"], "automation");
+    assert_eq!(recorded[4]["action"], "set_enabled");
+    assert_eq!(recorded[4]["input"]["automation_id"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(recorded[4]["input"]["enabled"], false);
+    assert_eq!(recorded[4]["input"]["expected_revision"], 2);
+
+    assert_eq!(recorded[5]["tool"], "automation");
+    assert_eq!(recorded[5]["action"], "delete");
+    assert_eq!(recorded[5]["input"]["automation_id"], "00000000-0000-0000-0000-000000000001");
+    assert_eq!(recorded[5]["input"]["expected_revision"], 3);
+
+    assert_eq!(recorded[6]["tool"], "automation");
+    assert_eq!(recorded[6]["action"], "run");
+    assert_eq!(recorded[6]["input"]["automation_id"], "00000000-0000-0000-0000-000000000001");
 }

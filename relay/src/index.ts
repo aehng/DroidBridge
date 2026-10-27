@@ -685,22 +685,428 @@ const PHONE_PROTOCOL_VERSION = "2026-07-28";
 const PHONE_META_KEY = "io.modelcontextprotocol/protocolVersion";
 const SERVER_INFO = { name: "DroidBridge", version: "relay" };
 
-const toolDef = (name: string, description: string, readOnly: boolean) => ({
+export const VOICE_INSTRUCTIONS =
+  "DroidBridge controls the user's Android phone. Rules: (1) CONFIRM OUT LOUD: before any critical or irreversible action - sending a text, message, or email, calling someone, submitting a form, buying or paying, deleting data, changing settings, or running a shell command that modifies anything - tell the user in plain words exactly what you are about to do (who, what, content) and ask 'Should I go ahead?'. Wait for the user's spoken yes. If they say no or are unsure, do not do it. Do not rely on any on-screen approval dialog; the user's spoken answer is the confirmation. Reading the screen, taking screenshots, and checking status need no confirmation. (2) PREFER BACKGROUND SHELL: when Shizuku is available, do tasks with the shell tool (e.g. am start/broadcast intents, settings put/get, cmd, content queries, service call) instead of opening and driving apps on screen; use the UI tools (screen, tap, type, swipe, open_app, navigate) only when shell cannot do it or the user asks. (3) SHIZUKU: shell and any Shizuku-backed tool require Shizuku to be running and authorized for DroidBridge. Call shizuku_status once at the start of a session before using them; if it reports not connected, tell the user and fall back to UI tools. A SHIZUKU_NOT_CONNECTED error means the same. (4) After UI actions, the reply contains the new screen; read it before acting again.";
+
+const toolDef = (
+  name: string,
+  title: string,
+  description: string,
+  readOnly: boolean,
+  inputSchema: Record<string, unknown>,
+) => ({
   name,
+  title,
   description,
-  inputSchema: { type: "object", additionalProperties: true },
-  annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, openWorldHint: false },
+  inputSchema,
+  annotations: readOnly
+    ? { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    : { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
 });
+export const AUTOMATION_TRIGGER_SCHEMA = {
+  type: "object",
+  description:
+    "Trigger condition for when the automation should fire. Must be one of: 'at' (specific timestamp), 'interval' (periodic milliseconds), 'rrule' (calendar recurrence), or 'event' (system event).",
+  oneOf: [
+    {
+      type: "object",
+      description: "Trigger at an exact point in time (ISO 8601 string)",
+      properties: {
+        type: { type: "string", enum: ["at"], description: "Trigger kind 'at'" },
+        at: { type: "string", description: "ISO 8601 / RFC 3339 timestamp string (e.g. '2026-10-27T08:00:00Z')" },
+      },
+      required: ["type", "at"],
+    },
+    {
+      type: "object",
+      description: "Trigger periodically at a fixed interval in milliseconds",
+      properties: {
+        type: { type: "string", enum: ["interval"], description: "Trigger kind 'interval'" },
+        every_ms: {
+          type: "integer",
+          minimum: 60000,
+          maximum: 2592000000,
+          description: "Interval period in milliseconds (min 60000 ms [1m], max 2592000000 ms [30d])",
+        },
+      },
+      required: ["type", "every_ms"],
+    },
+    {
+      type: "object",
+      description: "Trigger on a recurring calendar schedule using RFC 5545 RRULE syntax and IANA timezone",
+      properties: {
+        type: { type: "string", enum: ["rrule"], description: "Trigger kind 'rrule'" },
+        rrule: { type: "string", description: "iCalendar RFC 5545 recurrence rule (e.g. 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0')" },
+        timezone: { type: "string", description: "IANA timezone identifier (e.g. 'America/New_York' or 'UTC')" },
+      },
+      required: ["type", "rrule", "timezone"],
+    },
+    {
+      type: "object",
+      description: "Trigger when a system or device event occurs",
+      properties: {
+        type: { type: "string", enum: ["event"], description: "Trigger kind 'event'" },
+        name: { type: "string", description: "Event name string (e.g. 'battery_low', 'screen_off', 'boot_completed')" },
+        match: {
+          type: "object",
+          description: "Optional key-value filters to match against event payload",
+          additionalProperties: { type: ["string", "number", "boolean"] },
+        },
+      },
+      required: ["type", "name"],
+    },
+  ],
+};
+
+export const AUTOMATION_ACTION_SCHEMA = {
+  type: "object",
+  description:
+    "Action tree node to execute when triggered. Can be a 'call', 'sequence', 'conditional', 'repeat', 'delay', or 'set_state'.",
+  oneOf: [
+    {
+      type: "object",
+      description: "Execute a device tool (command, android, visual, filesystem, or network)",
+      properties: {
+        type: { type: "string", enum: ["call"], description: "Action kind 'call'" },
+        tool: {
+          type: "string",
+          enum: ["command", "android", "visual", "filesystem", "network"],
+          description: "Target tool name",
+        },
+        action: {
+          type: "string",
+          description:
+            "Tool action: 'run' for command; 'launch' or 'clipboard' for android; 'element' or 'interact' for visual; 'manage' or 'download' for filesystem; 'diagnose' for network",
+        },
+        args: {
+          type: "object",
+          description:
+            "Arguments for the tool action. E.g. command run: {\"command\": \"...\", \"run_as\": \"shell\"}; android launch: {\"operation\": \"package\", \"package_name\": \"com.android.settings\"}; android clipboard: {\"operation\": \"clear\"}; visual element: {\"operation\": \"tap\", \"by\": \"text\", \"value\": \"Settings\"}",
+        },
+        on_failure: {
+          type: "string",
+          enum: ["stop", "continue"],
+          default: "stop",
+          description:
+            "'stop' (default) ends execution on failure; 'continue' records failure for result condition and proceeds",
+        },
+      },
+      required: ["type", "tool", "action", "args"],
+    },
+    {
+      type: "object",
+      description: "Execute child actions sequentially in order",
+      properties: {
+        type: { type: "string", enum: ["sequence"], description: "Action kind 'sequence'" },
+        children: {
+          type: "array",
+          minItems: 1,
+          maxItems: 64,
+          description: "Array of child action nodes (1 to 64 items)",
+          items: { type: "object", description: "Action node" },
+        },
+      },
+      required: ["type", "children"],
+    },
+    {
+      type: "object",
+      description: "Conditional branching based on state variable, trigger payload, or previous step result",
+      properties: {
+        type: { type: "string", enum: ["conditional"], description: "Action kind 'conditional'" },
+        condition: {
+          type: "object",
+          description: "Condition check",
+          properties: {
+            source: {
+              type: "string",
+              enum: ["state", "trigger", "result"],
+              description: "Source of value: state variable, trigger payload, or previous step result",
+            },
+            key: { type: "string", description: "Key to evaluate in source" },
+            operator: {
+              type: "string",
+              enum: ["equals", "not_equals", "greater_than", "less_than", "exists"],
+              description: "Comparison operator",
+            },
+            value: {
+              type: ["string", "number", "boolean"],
+              description: "Value to compare against (omitted for 'exists')",
+            },
+          },
+          required: ["source", "key", "operator"],
+        },
+        then: { type: "object", description: "Action node to execute if condition is true" },
+        else: { type: "object", description: "Optional action node to execute if condition is false" },
+      },
+      required: ["type", "condition", "then"],
+    },
+    {
+      type: "object",
+      description: "Repeat an action a specified number of times with optional delay between repetitions",
+      properties: {
+        type: { type: "string", enum: ["repeat"], description: "Action kind 'repeat'" },
+        count: { type: "integer", minimum: 1, maximum: 1000, description: "Number of iterations (1-1000)" },
+        action: { type: "object", description: "Action node to repeat" },
+        delay_ms: {
+          type: "integer",
+          minimum: 0,
+          maximum: 86400000,
+          default: 0,
+          description: "Delay between iterations in milliseconds (0-86400000 ms)",
+        },
+      },
+      required: ["type", "count", "action"],
+    },
+    {
+      type: "object",
+      description: "Pause execution for a fixed duration",
+      properties: {
+        type: { type: "string", enum: ["delay"], description: "Action kind 'delay'" },
+        duration_ms: {
+          type: "integer",
+          minimum: 1,
+          maximum: 86400000,
+          description: "Duration to pause in milliseconds (1 to 86400000 ms [up to 24 hours])",
+        },
+      },
+      required: ["type", "duration_ms"],
+    },
+    {
+      type: "object",
+      description: "Store a persistent state variable in the automation's state map",
+      properties: {
+        type: { type: "string", enum: ["set_state"], description: "Action kind 'set_state'" },
+        key: { type: "string", description: "State variable key name" },
+        value: { type: ["string", "number", "boolean"], description: "Scalar value to store" },
+      },
+      required: ["type", "key", "value"],
+    },
+  ],
+};
+
 // Mirrors voice_tool_definitions() in rust/crates/runtime/src/voice_mcp.rs.
 export const VOICE_TOOLS = [
-  toolDef("screen", "Read the current screen as a compact node tree. The reply is the new screen.", true),
-  toolDef("tap", "Tap a node or visible text, then return the new screen.", false),
-  toolDef("long_press", "Long-press a node or visible text, then return the new screen.", false),
-  toolDef("swipe", "Swipe on the screen, then return the new screen.", false),
-  toolDef("type", "Type Unicode text into a focused or named field, then return the new screen.", false),
-  toolDef("open_app", "Launch an app by package name, then return the new screen.", false),
-  toolDef("navigate", "Press Back, Home, or Recents, then return the new screen.", false),
-  toolDef("screenshot", "Capture screen pixels when the model needs to see them. The reply is the new screen.", true),
+  toolDef(
+    "screen",
+    "Read Screen",
+    "Use this when reading the current screen state as a compact node tree. The reply is the new screen.",
+    true,
+    { type: "object", properties: {} },
+  ),
+  toolDef(
+    "tap",
+    "Tap Screen",
+    "Use this when tapping an interactive element or text on the screen, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        node_ref: { type: "string", description: "Node reference ID of the element to tap" },
+        text: { type: "string", description: "Visible text of the element to tap if node_ref is not known" },
+      },
+    },
+  ),
+  toolDef(
+    "long_press",
+    "Long Press Screen",
+    "Use this when long-pressing an element or text on the screen, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        node_ref: { type: "string", description: "Node reference ID of the element to long-press" },
+        text: { type: "string", description: "Visible text of the element to long-press" },
+      },
+    },
+  ),
+  toolDef(
+    "swipe",
+    "Swipe Screen",
+    "Use this when swiping or scrolling on the screen, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        direction: { type: "string", enum: ["up", "down", "left", "right"], description: "Swipe direction (up, down, left, right)" },
+        from_x: { type: "integer", description: "Starting X coordinate in display pixels" },
+        from_y: { type: "integer", description: "Starting Y coordinate in display pixels" },
+        to_x: { type: "integer", description: "Ending X coordinate in display pixels" },
+        to_y: { type: "integer", description: "Ending Y coordinate in display pixels" },
+      },
+    },
+  ),
+  toolDef(
+    "type",
+    "Type Text",
+    "Use this when typing text into a focused or named field, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The text to type into the target field" },
+        node_ref: { type: "string", description: "Node reference ID of the target field" },
+        field: { type: "string", description: "Label or placeholder of the target field" },
+      },
+      required: ["text"],
+    },
+  ),
+  toolDef(
+    "open_app",
+    "Open App",
+    "Use this when launching an app by its package name, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        package: { type: "string", description: "Android package name to launch" },
+      },
+      required: ["package"],
+    },
+  ),
+  toolDef(
+    "navigate",
+    "Navigate",
+    "Use this when pressing Back, Home, or Recents, then returning the new screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        destination: { type: "string", enum: ["back", "home", "recents"], description: "Navigation action: back, home, or recents" },
+      },
+      required: ["destination"],
+    },
+  ),
+  toolDef(
+    "screenshot",
+    "Take Screenshot",
+    "Use this when capturing screen pixels is needed to inspect visual appearance. The reply is the new screen.",
+    true,
+    { type: "object", properties: {} },
+  ),
+  toolDef(
+    "shizuku_status",
+    "Shizuku Status",
+    "Use this when checking if Shizuku is running and authorized for DroidBridge before running shell commands.",
+    true,
+    { type: "object", properties: {} },
+  ),
+  toolDef(
+    "shell",
+    "Execute Shell Command",
+    "Use this when executing a shell command via Shizuku. Requires Shizuku running and authorized (check shizuku_status first). Prefer this over driving apps on screen. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "The shell command to run via Shizuku" },
+        timeout_ms: { type: "integer", description: "Execution timeout in milliseconds (1000-60000, default 15000)", minimum: 1000, maximum: 60000, default: 15000 },
+        max_output_bytes: { type: "integer", description: "Maximum bytes of output to return (1-65536, default 16384)", minimum: 1, maximum: 65536, default: 16384 },
+      },
+      required: ["command"],
+    },
+  ),
+  toolDef(
+    "automation_list",
+    "List Automations",
+    "Use this when listing persistent automations saved on the phone.",
+    true,
+    {
+      type: "object",
+      properties: {
+        limit: { type: "integer", description: "Maximum number of automations to return (1-500, default 100)", minimum: 1, maximum: 500, default: 100 },
+      },
+    },
+  ),
+  toolDef(
+    "automation_get",
+    "Get Automation",
+    "Use this when viewing an automation definition and recent execution history by ID.",
+    true,
+    {
+      type: "object",
+      properties: {
+        automation_id: { type: "string", description: "UUID of the automation to retrieve" },
+        history_limit: { type: "integer", description: "Maximum number of history entries (1-100, default 20)", minimum: 1, maximum: 100, default: 20 },
+      },
+      required: ["automation_id"],
+    },
+  ),
+  toolDef(
+    "automation_create",
+    "Create Automation",
+    "CRITICAL: before calling, say out loud the automation's name, trigger and actions (or which one is deleted) and wait for the user's spoken yes. Use this when creating a persistent automation on the phone. Trigger kinds: (1) at: exact timestamp 'at' (e.g. {\"type\":\"at\",\"at\":\"2026-10-27T08:00:00Z\"}), (2) interval: periodic milliseconds 'every_ms' (60000-2592000000, e.g. {\"type\":\"interval\",\"every_ms\":3600000}), (3) rrule: iCalendar 'rrule' with 'timezone' (e.g. {\"type\":\"rrule\",\"rrule\":\"FREQ=DAILY;BYHOUR=9;BYMINUTE=0\",\"timezone\":\"America/New_York\"}), (4) event: system event 'name' with optional 'match' (e.g. {\"type\":\"event\",\"name\":\"battery_low\"}). Action kinds: (1) call: device tool with 'tool', 'action', 'args', optional 'on_failure' ('stop'|'continue'), e.g. tool 'command' action 'run' args {\"command\":\"settings put system screen_brightness 100\",\"run_as\":\"shell\"} or tool 'android' action 'launch' args {\"operation\":\"package\",\"package_name\":\"com.android.settings\"}, (2) sequence: list of child actions in 'children', (3) conditional: checks 'condition' ({source:'state'|'trigger'|'result',key,operator,value}) then runs 'then' and optional 'else', (4) repeat: repeats 'action' for 'count' (1-1000) with optional 'delay_ms', (5) delay: pauses for 'duration_ms' (1-86400000), (6) set_state: stores 'key' and scalar 'value'. Example create: {\"name\":\"mute_at_night\",\"enabled\":true,\"trigger\":{\"type\":\"at\",\"at\":\"2026-10-27T22:00:00Z\"},\"action\":{\"type\":\"call\",\"tool\":\"command\",\"action\":\"run\",\"args\":{\"command\":\"cmd audio set-volume 0\",\"run_as\":\"shell\"}}}.",
+    false,
+    {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Name for the automation" },
+        enabled: { type: "boolean", description: "Whether the automation is enabled upon creation" },
+        trigger: AUTOMATION_TRIGGER_SCHEMA,
+        action: AUTOMATION_ACTION_SCHEMA,
+      },
+      required: ["name", "enabled", "trigger", "action"],
+    },
+  ),
+  toolDef(
+    "automation_update",
+    "Update Automation",
+    "CRITICAL: before calling, say out loud the automation's name, trigger and actions (or which one is deleted) and wait for the user's spoken yes. Use this when editing an existing persistent automation on the phone (requires automation_id and current expected_revision from automation_get or automation_list). Trigger kinds: (1) at: exact timestamp 'at' (ISO 8601), (2) interval: milliseconds 'every_ms' (60000-2592000000), (3) rrule: recurrence rule 'rrule' with 'timezone', (4) event: event 'name' with optional 'match'. Action kinds: (1) call: 'tool', 'action', 'args', optional 'on_failure', (2) sequence: 'children', (3) conditional: 'condition', 'then', optional 'else', (4) repeat: 'count', 'action', optional 'delay_ms', (5) delay: 'duration_ms', (6) set_state: 'key', 'value'.",
+    false,
+    {
+      type: "object",
+      properties: {
+        automation_id: { type: "string", description: "UUID of the existing automation to update" },
+        expected_revision: { type: "integer", description: "Current revision from automation_get or automation_list" },
+        name: { type: "string", description: "Name for the automation" },
+        enabled: { type: "boolean", description: "Whether the automation is enabled" },
+        trigger: AUTOMATION_TRIGGER_SCHEMA,
+        action: AUTOMATION_ACTION_SCHEMA,
+      },
+      required: ["automation_id", "expected_revision", "name", "enabled", "trigger", "action"],
+    },
+  ),
+  toolDef(
+    "automation_set_enabled",
+    "Set Automation Enabled",
+    "Use this when enabling or disabling an existing automation. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        automation_id: { type: "string", description: "UUID of the automation" },
+        enabled: { type: "boolean", description: "True to enable, false to disable" },
+        expected_revision: { type: "integer", description: "Current revision from automation_get or automation_list" },
+      },
+      required: ["automation_id", "enabled", "expected_revision"],
+    },
+  ),
+  toolDef(
+    "automation_delete",
+    "Delete Automation",
+    "CRITICAL: before calling, say out loud the automation's name, trigger and actions (or which one is deleted) and wait for the user's spoken yes. Use this when deleting an automation by ID. Requires automation_id and current expected_revision from automation_get or automation_list.",
+    false,
+    {
+      type: "object",
+      properties: {
+        automation_id: { type: "string", description: "UUID of the automation to delete" },
+        expected_revision: { type: "integer", description: "Current revision from automation_get or automation_list" },
+      },
+      required: ["automation_id", "expected_revision"],
+    },
+  ),
+  toolDef(
+    "automation_run",
+    "Run Automation",
+    "Use this when immediately running an existing automation outside its normal schedule. Before critical actions (sending, submitting, buying, deleting, changing settings) say exactly what you will do and get the user's spoken yes first.",
+    false,
+    {
+      type: "object",
+      properties: {
+        automation_id: { type: "string", description: "UUID of the automation to run" },
+      },
+      required: ["automation_id"],
+    },
+  ),
 ];
 const VOICE_TOOL_NAMES = new Set(VOICE_TOOLS.map((tool) => tool.name));
 
@@ -732,8 +1138,7 @@ async function handleOne(
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions:
-          "Controls the user's Android phone. Each action tool returns the new screen.",
+        instructions: VOICE_INSTRUCTIONS,
       });
     }
     case "ping":
