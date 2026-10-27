@@ -1894,10 +1894,21 @@ fn validate_captured_image(
     image: &VisualEncodedImage,
     admitted: &VisualDisplaySnapshot,
 ) -> Result<(), DomainError> {
-    if image.captured_display.as_ref() != Some(admitted)
-        || image.width != admitted.display.width
-        || image.height != admitted.display.height
-    {
+    // Voice captures are downscaled on device (long edge capped) for the model; accept an
+    // image no larger than the display with the same aspect ratio. Full-size otherwise.
+    let exact =
+        image.width == admitted.display.width && image.height == admitted.display.height;
+    let voice_scaled = crate::voice_jpeg_encode()
+        && image.width >= 1
+        && image.height >= 1
+        && image.width <= admitted.display.width
+        && image.height <= admitted.display.height
+        && {
+            let lhs = u64::from(image.width) * u64::from(admitted.display.height);
+            let rhs = u64::from(image.height) * u64::from(admitted.display.width);
+            lhs.abs_diff(rhs) <= u64::from(admitted.display.width.max(admitted.display.height)) * 2
+        };
+    if image.captured_display.as_ref() != Some(admitted) || !(exact || voice_scaled) {
         return Err(DomainError::new(
             ErrorCode::StaleAuthority,
             "visual image display changed",
